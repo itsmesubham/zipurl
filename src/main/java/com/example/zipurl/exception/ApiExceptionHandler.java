@@ -33,6 +33,14 @@ public class ApiExceptionHandler {
         return buildErrorResponse(HttpStatus.SERVICE_UNAVAILABLE, exception.getMessage(), request.getRequestURI());
     }
 
+    @ExceptionHandler(ShortUrlNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleShortUrlNotFound(
+            ShortUrlNotFoundException exception,
+            HttpServletRequest request
+    ) {
+        return buildErrorResponse(HttpStatus.NOT_FOUND, exception.getMessage(), request.getRequestURI());
+    }
+
     @ExceptionHandler(ResponseStatusException.class)
     public ResponseEntity<ErrorResponse> handleResponseStatusException(
             ResponseStatusException exception,

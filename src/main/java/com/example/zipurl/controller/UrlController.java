@@ -33,7 +33,8 @@ public class UrlController {
                 shortUrl.getAlias(),
                 buildShortUrl(shortUrl.getAlias()),
                 shortUrl.getOriginalUrl(),
-                shortUrl.getCreatedAt()
+                shortUrl.getCreatedAt(),
+                shortUrl.getAccessCount()
         );
     }
 

@@ -33,6 +33,9 @@ public class ShortUrl {
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 
+    @Column(nullable = false)
+    private long accessCount;
+
     protected ShortUrl() {
     }
 
@@ -62,5 +65,9 @@ public class ShortUrl {
 
     public Instant getCreatedAt() {
         return createdAt;
+    }
+
+    public long getAccessCount() {
+        return accessCount;
     }
 }

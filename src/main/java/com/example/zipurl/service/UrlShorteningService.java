@@ -1,11 +1,14 @@
 package com.example.zipurl.service;
 
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import com.example.zipurl.dto.CreateShortUrlRequest;
 import com.example.zipurl.exception.AliasAlreadyExistsException;
 import com.example.zipurl.exception.AliasGenerationException;
+import com.example.zipurl.exception.ShortUrlNotFoundException;
 import com.example.zipurl.model.ShortUrl;
 import com.example.zipurl.repository.ShortUrlRepository;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -24,6 +27,7 @@ public class UrlShorteningService {
     private final AliasGenerator aliasGenerator;
     private final ShortUrlRepository shortUrlRepository;
     private final TransactionTemplate transactionTemplate;
+    private final Map<String, String> originalUrlCache = new ConcurrentHashMap<>();
 
     public UrlShorteningService(
             AliasGenerator aliasGenerator,
@@ -46,19 +50,39 @@ public class UrlShorteningService {
         return createWithGeneratedAlias(originalUrl);
     }
 
+    public String resolveOriginalUrl(String alias) {
+        String cachedOriginalUrl = originalUrlCache.get(alias);
+        if (cachedOriginalUrl != null) {
+            incrementAccessCount(alias);
+            return cachedOriginalUrl;
+        }
+
+        return transactionTemplate.execute(status -> {
+            ShortUrl shortUrl = shortUrlRepository.findByAlias(alias)
+                    .orElseThrow(() -> new ShortUrlNotFoundException(alias));
+
+            shortUrlRepository.incrementAccessCountByAlias(alias);
+            originalUrlCache.put(alias, shortUrl.getOriginalUrl());
+
+            return shortUrl.getOriginalUrl();
+        });
+    }
+
     private ShortUrl createWithCustomAlias(String alias, String originalUrl) {
         if (isReservedAlias(alias)) {
             throw new AliasAlreadyExistsException(alias);
         }
 
         try {
-            return transactionTemplate.execute(status -> {
+            ShortUrl shortUrl = transactionTemplate.execute(status -> {
                 if (shortUrlRepository.existsByAlias(alias)) {
                     throw new AliasAlreadyExistsException(alias);
                 }
 
                 return shortUrlRepository.saveAndFlush(new ShortUrl(alias, originalUrl));
             });
+            originalUrlCache.put(shortUrl.getAlias(), shortUrl.getOriginalUrl());
+            return shortUrl;
         } catch (DataIntegrityViolationException exception) {
             throw new AliasAlreadyExistsException(alias);
         }
@@ -73,9 +97,11 @@ public class UrlShorteningService {
             }
 
             try {
-                return transactionTemplate.execute(status ->
+                ShortUrl shortUrl = transactionTemplate.execute(status ->
                         shortUrlRepository.saveAndFlush(new ShortUrl(alias, originalUrl))
                 );
+                originalUrlCache.put(shortUrl.getAlias(), shortUrl.getOriginalUrl());
+                return shortUrl;
             } catch (DataIntegrityViolationException exception) {
                 // A concurrent request may have claimed the alias first; try a fresh transaction.
             }
@@ -94,5 +120,15 @@ public class UrlShorteningService {
 
     private boolean isReservedAlias(String alias) {
         return RESERVED_ALIASES.contains(alias.toLowerCase(Locale.ROOT));
+    }
+
+    private void incrementAccessCount(String alias) {
+        transactionTemplate.executeWithoutResult(status -> {
+            int updatedRows = shortUrlRepository.incrementAccessCountByAlias(alias);
+            if (updatedRows == 0) {
+                originalUrlCache.remove(alias);
+                throw new ShortUrlNotFoundException(alias);
+            }
+        });
     }
 }
