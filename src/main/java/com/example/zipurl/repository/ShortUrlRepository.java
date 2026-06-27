@@ -15,6 +15,6 @@ public interface ShortUrlRepository extends JpaRepository<ShortUrl, Long> {
     boolean existsByAlias(String alias);
 
     @Modifying
-    @Query("update ShortUrl shortUrl set shortUrl.accessCount = shortUrl.accessCount + 1 where shortUrl.alias = :alias")
-    int incrementAccessCountByAlias(@Param("alias") String alias);
+    @Query("update ShortUrl shortUrl set shortUrl.accessCount = shortUrl.accessCount + :delta where shortUrl.alias = :alias")
+    int addAccessCountByAlias(@Param("alias") String alias, @Param("delta") long delta);
 }

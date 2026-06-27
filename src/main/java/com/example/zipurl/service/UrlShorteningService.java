@@ -26,6 +26,7 @@ public class UrlShorteningService {
     private static final Set<String> RESERVED_ALIASES = Set.of("api", "health", "h2-console");
 
     private final AliasGenerator aliasGenerator;
+    private final AccessCountService accessCountService;
     private final ShortUrlRepository shortUrlRepository;
     private final TransactionTemplate transactionTemplate;
     // ponytail: local bounded cache; use Redis or another shared cache when running multiple app instances.
@@ -36,10 +37,12 @@ public class UrlShorteningService {
 
     public UrlShorteningService(
             AliasGenerator aliasGenerator,
+            AccessCountService accessCountService,
             ShortUrlRepository shortUrlRepository,
             PlatformTransactionManager transactionManager
     ) {
         this.aliasGenerator = aliasGenerator;
+        this.accessCountService = accessCountService;
         this.shortUrlRepository = shortUrlRepository;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
     }
@@ -56,26 +59,24 @@ public class UrlShorteningService {
     }
 
     public String resolveOriginalUrl(String alias) {
-        String cachedOriginalUrl = originalUrlCache.getIfPresent(alias);
-        if (cachedOriginalUrl != null) {
-            incrementAccessCount(alias);
-            return cachedOriginalUrl;
+        String originalUrl = originalUrlCache.get(alias, this::loadOriginalUrl);
+        try {
+            accessCountService.recordAccess(alias);
+        } catch (ShortUrlNotFoundException exception) {
+            originalUrlCache.invalidate(alias);
+            throw exception;
         }
 
-        return transactionTemplate.execute(status -> {
-            ShortUrl shortUrl = shortUrlRepository.findByAlias(alias)
-                    .orElseThrow(() -> new ShortUrlNotFoundException(alias));
-
-            shortUrlRepository.incrementAccessCountByAlias(alias);
-            originalUrlCache.put(alias, shortUrl.getOriginalUrl());
-
-            return shortUrl.getOriginalUrl();
-        });
+        return originalUrl;
     }
 
     public ShortUrl getShortUrl(String alias) {
         return shortUrlRepository.findByAlias(alias)
                 .orElseThrow(() -> new ShortUrlNotFoundException(alias));
+    }
+
+    public long pendingAccessCount(String alias) {
+        return accessCountService.pendingAccessCount(alias);
     }
 
     private ShortUrl createWithCustomAlias(String alias, String originalUrl) {
@@ -94,7 +95,7 @@ public class UrlShorteningService {
             originalUrlCache.put(shortUrl.getAlias(), shortUrl.getOriginalUrl());
             return shortUrl;
         } catch (DataIntegrityViolationException exception) {
-            throw new AliasAlreadyExistsException(alias);
+            throw new AliasAlreadyExistsException(alias, exception);
         }
     }
 
@@ -132,13 +133,10 @@ public class UrlShorteningService {
         return RESERVED_ALIASES.contains(alias.toLowerCase(Locale.ROOT));
     }
 
-    private void incrementAccessCount(String alias) {
-        transactionTemplate.executeWithoutResult(status -> {
-            int updatedRows = shortUrlRepository.incrementAccessCountByAlias(alias);
-            if (updatedRows == 0) {
-                originalUrlCache.invalidate(alias);
-                throw new ShortUrlNotFoundException(alias);
-            }
-        });
+    private String loadOriginalUrl(String alias) {
+        return shortUrlRepository.findByAlias(alias)
+                .map(ShortUrl::getOriginalUrl)
+                .orElseThrow(() -> new ShortUrlNotFoundException(alias));
     }
+
 }

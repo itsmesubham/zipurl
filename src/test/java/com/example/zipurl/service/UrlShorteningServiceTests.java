@@ -90,6 +90,36 @@ class UrlShorteningServiceTests {
         }
     }
 
+    @Test
+    void concurrentResolvesReturnOriginalUrlAndTrackEveryAccess() {
+        int requestCount = 8;
+        shortUrlRepository.saveAndFlush(new ShortUrl("hot001", "https://example.com/hot"));
+        CountDownLatch startLatch = new CountDownLatch(1);
+        ExecutorService executorService = Executors.newFixedThreadPool(requestCount);
+
+        try {
+            List<Future<Object>> futures = java.util.stream.IntStream.range(0, requestCount)
+                    .mapToObj(index -> (Callable<Object>) () -> {
+                        startLatch.await();
+                        return urlShorteningService.resolveOriginalUrl("hot001");
+                    })
+                    .map(executorService::submit)
+                    .toList();
+
+            startLatch.countDown();
+
+            List<Object> results = futures.stream()
+                    .map(this::getResult)
+                    .toList();
+
+            assertThat(results).containsOnly("https://example.com/hot");
+            assertThat(shortUrlRepository.findByAlias("hot001"))
+                    .hasValueSatisfying(shortUrl -> assertThat(shortUrl.getAccessCount()).isEqualTo(requestCount));
+        } finally {
+            executorService.shutdownNow();
+        }
+    }
+
     private Object getResult(Future<Object> future) {
         try {
             return future.get(5, TimeUnit.SECONDS);

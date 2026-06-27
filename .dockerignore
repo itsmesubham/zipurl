@@ -1,0 +1,9 @@
+target/
+.tools/
+.git/
+.cursor/
+.idea/
+.vscode/
+*.iml
+*.log
+.DS_Store
