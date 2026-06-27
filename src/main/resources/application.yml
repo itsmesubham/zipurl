@@ -16,3 +16,11 @@ spring:
 
 server:
   port: 8080
+
+zipurl:
+  generated-alias-length: 8
+  max-generated-alias-attempts: 10
+  reserved-aliases:
+    - api
+    - health
+    - h2-console
