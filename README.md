@@ -28,7 +28,7 @@ flowchart TD
 
 ## API
 
-- `POST /api/urls` creates a short URL. `longUrl` must be `http` or `https`; `customAlias` is optional.
+- `POST /api/urls` creates a short URL. `longUrl` must be a valid URL; `customAlias` is optional.
 - `GET /{alias}` redirects to the original URL and increments `accessCount`.
 - `GET /api/urls/{alias}` returns metadata without incrementing `accessCount`.
 
@@ -42,6 +42,21 @@ flowchart TD
 ```bash
 mvn spring-boot:run
 ```
+
+## Run With DigitalOcean Postgres
+
+```bash
+export ZIPURL_DB_PASSWORD='<database-password>'
+SPRING_PROFILES_ACTIVE=postgres mvn spring-boot:run
+```
+
+The `postgres` profile uses:
+
+- Host: `zipurl-do-user-39324437-0.a.db.ondigitalocean.com`
+- Port: `25060`
+- Database: `defaultdb`
+- Username: `doadmin`
+- SSL mode: `require`
 
 ## Test
 
