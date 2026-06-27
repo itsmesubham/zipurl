@@ -3,10 +3,12 @@ package com.example.zipurl.dto;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import org.hibernate.validator.constraints.URL;
 
 public record CreateShortUrlRequest(
         @NotBlank
         @Size(max = 2048)
+        @URL(message = "must be a valid URL")
         String longUrl,
 
         @Size(min = 3, max = 32)

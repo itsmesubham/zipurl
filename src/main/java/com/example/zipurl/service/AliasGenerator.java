@@ -12,6 +12,10 @@ public class AliasGenerator {
     private final SecureRandom secureRandom = new SecureRandom();
 
     public String generate(int length) {
+        if (length < 1) {
+            throw new IllegalArgumentException("Alias length must be positive");
+        }
+
         StringBuilder alias = new StringBuilder(length);
 
         for (int index = 0; index < length; index++) {
