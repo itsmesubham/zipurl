@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 
 class DeployedAppIntegrationTests {
 
+    private static final String DEFAULT_BASE_URL = "https://goldfish-app-gvvnj.ondigitalocean.app/health";
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
@@ -26,9 +27,13 @@ class DeployedAppIntegrationTests {
 
     @BeforeAll
     static void requireDeploymentBaseUrl() {
+        assumeTrue(runDeployedIntegrationTests(),
+                "Set ZIPURL_RUN_DEPLOYED_INTEGRATION_TESTS=true to run deployed-app integration tests");
+
         String configuredBaseUrl = System.getenv("ZIPURL_INTEGRATION_BASE_URL");
-        assumeTrue(configuredBaseUrl != null && !configuredBaseUrl.isBlank(),
-                "Set ZIPURL_INTEGRATION_BASE_URL to run deployed-app integration tests");
+        if (configuredBaseUrl == null || configuredBaseUrl.isBlank()) {
+            configuredBaseUrl = DEFAULT_BASE_URL;
+        }
 
         baseUrl = normalizeBaseUrl(configuredBaseUrl);
     }
@@ -121,5 +126,10 @@ class DeployedAppIntegrationTests {
         }
 
         return normalized;
+    }
+
+    private static boolean runDeployedIntegrationTests() {
+        return Boolean.getBoolean("zipurl.runDeployedIntegrationTests")
+                || "true".equalsIgnoreCase(System.getenv("ZIPURL_RUN_DEPLOYED_INTEGRATION_TESTS"));
     }
 }

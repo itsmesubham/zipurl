@@ -252,6 +252,11 @@ The `postgres` profile uses:
 - Username: `doadmin`
 - SSL mode: `require`
 
+The Docker image defaults to `SPRING_PROFILES_ACTIVE=postgres` so DigitalOcean App Platform uses the shared Postgres database instead of per-instance H2. Set these App Platform environment variables before deploying:
+
+- `ZIPURL_DB_PASSWORD`
+- `ZIPURL_VALKEY_PASSWORD`
+
 Valkey shared URL cache uses:
 
 - Host: `zipurl-valkey-do-user-39324437-0.a.db.ondigitalocean.com`
@@ -266,6 +271,21 @@ Set `ZIPURL_URL_CACHE_MODE=local` to bypass Valkey and use only in-process Caffe
 
 ```bash
 mvn test
+```
+
+## Deployed Integration Tests
+
+The deployed integration tests default to `https://goldfish-app-gvvnj.ondigitalocean.app/health`.
+
+```bash
+mvn -Dzipurl.runDeployedIntegrationTests=true -Dtest=DeployedAppIntegrationTests test
+```
+
+Override the deployed target with:
+
+```bash
+ZIPURL_INTEGRATION_BASE_URL='https://your-app.example.com' \
+  mvn -Dzipurl.runDeployedIntegrationTests=true -Dtest=DeployedAppIntegrationTests test
 ```
 
 ## Health Check

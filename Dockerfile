@@ -20,4 +20,6 @@ USER zipurl
 
 EXPOSE 8080
 
+ENV SPRING_PROFILES_ACTIVE=postgres
+
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]
