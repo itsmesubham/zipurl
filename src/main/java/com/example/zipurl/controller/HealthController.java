@@ -1,4 +1,4 @@
-package com.example.zipurl.api;
+package com.example.zipurl.controller;
 
 import java.util.Map;
 
