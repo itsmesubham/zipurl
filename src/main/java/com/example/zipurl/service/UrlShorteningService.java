@@ -12,6 +12,9 @@ import com.example.zipurl.exception.AliasGenerationException;
 import com.example.zipurl.exception.ShortUrlNotFoundException;
 import com.example.zipurl.model.ShortUrl;
 import com.example.zipurl.repository.ShortUrlRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -20,6 +23,8 @@ import org.springframework.util.StringUtils;
 
 @Service
 public class UrlShorteningService {
+
+    private static final Logger log = LoggerFactory.getLogger(UrlShorteningService.class);
 
     private final AliasGenerator aliasGenerator;
     private final AccessCountService accessCountService;
@@ -67,8 +72,12 @@ public class UrlShorteningService {
         try {
             accessCountService.recordAccess(alias);
         } catch (ShortUrlNotFoundException exception) {
+            // Row is gone or expired while still cached: drop the stale entry and surface a 404.
             urlCacheService.invalidate(alias);
             throw exception;
+        } catch (DataAccessException exception) {
+            // The link is valid and cached; a transient counter-write failure must not break redirects.
+            log.warn("Failed to record access for alias '{}': {}", alias, exception.getMessage());
         }
 
         return originalUrl;

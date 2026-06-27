@@ -38,6 +38,9 @@ class UrlShorteningServiceTests {
     private ShortUrlRepository shortUrlRepository;
 
     @Autowired
+    private UrlCacheService urlCacheService;
+
+    @Autowired
     private TestAliasGenerator aliasGenerator;
 
     @BeforeEach
@@ -165,6 +168,18 @@ class UrlShorteningServiceTests {
 
         assertThat(urlShorteningService.resolveOriginalUrl("active1"))
                 .isEqualTo("https://example.com/active");
+    }
+
+    @Test
+    void resolveTreatsCachedButExpiredLinkAsNotFound() {
+        shortUrlRepository.saveAndFlush(
+                new ShortUrl("cached1", "https://example.com/cached", Instant.now().minusSeconds(60))
+        );
+        // Simulate an entry that was cached while still valid, then expired.
+        urlCacheService.putOriginalUrl("cached1", "https://example.com/cached");
+
+        assertThatThrownBy(() -> urlShorteningService.resolveOriginalUrl("cached1"))
+                .isInstanceOf(ShortUrlNotFoundException.class);
     }
 
     private Object getResult(Future<Object> future) {

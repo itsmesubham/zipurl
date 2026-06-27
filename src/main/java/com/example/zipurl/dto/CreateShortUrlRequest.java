@@ -1,5 +1,6 @@
 package com.example.zipurl.dto;
 
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
@@ -17,6 +18,7 @@ public record CreateShortUrlRequest(
         String customAlias,
 
         @Min(1)
+        @Max(value = 315_360_000L, message = "must not exceed 10 years (315360000 seconds)")
         Long ttlSeconds
 ) {
 }

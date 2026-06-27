@@ -1,5 +1,6 @@
 package com.example.zipurl.repository;
 
+import java.time.Instant;
 import java.util.Optional;
 
 import com.example.zipurl.model.ShortUrl;
@@ -15,6 +16,8 @@ public interface ShortUrlRepository extends JpaRepository<ShortUrl, Long> {
     boolean existsByAlias(String alias);
 
     @Modifying
-    @Query("update ShortUrl shortUrl set shortUrl.accessCount = shortUrl.accessCount + :delta where shortUrl.alias = :alias")
-    int addAccessCountByAlias(@Param("alias") String alias, @Param("delta") long delta);
+    @Query("update ShortUrl shortUrl set shortUrl.accessCount = shortUrl.accessCount + :delta "
+            + "where shortUrl.alias = :alias "
+            + "and (shortUrl.expiresAt is null or shortUrl.expiresAt > :now)")
+    int addAccessCountForActiveAlias(@Param("alias") String alias, @Param("delta") long delta, @Param("now") Instant now);
 }

@@ -153,7 +153,8 @@ Low-level details:
 - Caffeine uses atomic local loading, which avoids many same-instance concurrent requests stampeding Postgres for the same hot alias.
 - Valkey can be used as a shared L2 cache across app instances; Postgres remains the source of truth.
 - Redirects return only `302` plus the `Location` header. Metadata is available through the API endpoint instead.
-- If the alias disappears from Postgres while still cached, the access-count service can reject the update and the local cache entry is invalidated.
+- The per-access counter `UPDATE` is expiry-aware (`expires_at IS NULL OR expires_at > now`). If the alias is missing or expired while still cached, the update matches 0 rows, the cache entry is invalidated, and the redirect returns `404` — so expired links stop redirecting even on a cache hit.
+- A transient counter-write failure (e.g. a brief Postgres hiccup) is logged and swallowed so a valid, cached redirect stays available; only the count for that request is lost.
 
 ### Access Count Flow
 

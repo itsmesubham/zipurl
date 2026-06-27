@@ -1,5 +1,7 @@
 package com.example.zipurl.service;
 
+import java.time.Instant;
+
 import com.example.zipurl.exception.ShortUrlNotFoundException;
 import com.example.zipurl.repository.ShortUrlRepository;
 import org.springframework.stereotype.Service;
@@ -17,7 +19,7 @@ public class DatabaseAccessCountService implements AccessCountService {
     @Override
     @Transactional
     public void recordAccess(String alias) {
-        int updatedRows = shortUrlRepository.addAccessCountByAlias(alias, 1);
+        int updatedRows = shortUrlRepository.addAccessCountForActiveAlias(alias, 1, Instant.now());
         if (updatedRows == 0) {
             throw new ShortUrlNotFoundException(alias);
         }
