@@ -6,6 +6,7 @@ public record ShortUrlResponse(
         String alias,
         String shortUrl,
         String originalUrl,
-        Instant createdAt
+        Instant createdAt,
+        long accessCount
 ) {
 }
