@@ -277,6 +277,20 @@ The `postgres` profile keeps Hibernate on `ddl-auto: validate` (it never alters 
 
 Flyway runs before Hibernate validation on startup, so deploying a build that adds an entity column will migrate the live schema automatically (no manual `ALTER TABLE` and no `ddl-auto=update` in production). The H2/local profile has Flyway disabled and continues to use `ddl-auto: update`.
 
+### Connection Pool Sizing
+
+Managed Postgres has a hard connection cap (DigitalOcean reserves several slots for superuser/maintenance), so the `postgres` profile pins a small HikariCP pool instead of the default size of 10:
+
+| Property | Env var | Default |
+| --- | --- | --- |
+| `maximum-pool-size` | `ZIPURL_DB_MAX_POOL` | `5` |
+| `minimum-idle` | `ZIPURL_DB_MIN_IDLE` | `1` |
+| `connection-timeout` | `ZIPURL_DB_CONNECTION_TIMEOUT` | `10000` ms |
+| `max-lifetime` | `ZIPURL_DB_MAX_LIFETIME` | `300000` ms |
+| `keepalive-time` | `ZIPURL_DB_KEEPALIVE` | `120000` ms |
+
+Budget connections as `instances * maximum-pool-size + headroom` and keep it under the database's limit. If startup fails with `FATAL: remaining connection slots are reserved for roles with the SUPERUSER attribute`, the database is out of slots: reduce `ZIPURL_DB_MAX_POOL` and/or instance count, terminate leftover connections (`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'defaultdb' AND state = 'idle' AND pid <> pg_backend_pid();`), or restart the database. For higher instance counts, route through DigitalOcean's connection pool (PgBouncer) endpoint.
+
 
 ## Test
 
