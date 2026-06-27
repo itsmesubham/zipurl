@@ -1,10 +1,11 @@
 package com.example.zipurl.service;
 
+import java.time.Duration;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.example.zipurl.dto.CreateShortUrlRequest;
 import com.example.zipurl.exception.AliasAlreadyExistsException;
 import com.example.zipurl.exception.AliasGenerationException;
@@ -27,7 +28,11 @@ public class UrlShorteningService {
     private final AliasGenerator aliasGenerator;
     private final ShortUrlRepository shortUrlRepository;
     private final TransactionTemplate transactionTemplate;
-    private final Map<String, String> originalUrlCache = new ConcurrentHashMap<>();
+    // ponytail: local bounded cache; use Redis or another shared cache when running multiple app instances.
+    private final Cache<String, String> originalUrlCache = Caffeine.newBuilder()
+            .maximumSize(100_000)
+            .expireAfterAccess(Duration.ofHours(1))
+            .build();
 
     public UrlShorteningService(
             AliasGenerator aliasGenerator,
@@ -51,7 +56,7 @@ public class UrlShorteningService {
     }
 
     public String resolveOriginalUrl(String alias) {
-        String cachedOriginalUrl = originalUrlCache.get(alias);
+        String cachedOriginalUrl = originalUrlCache.getIfPresent(alias);
         if (cachedOriginalUrl != null) {
             incrementAccessCount(alias);
             return cachedOriginalUrl;
@@ -66,6 +71,11 @@ public class UrlShorteningService {
 
             return shortUrl.getOriginalUrl();
         });
+    }
+
+    public ShortUrl getShortUrl(String alias) {
+        return shortUrlRepository.findByAlias(alias)
+                .orElseThrow(() -> new ShortUrlNotFoundException(alias));
     }
 
     private ShortUrl createWithCustomAlias(String alias, String originalUrl) {
@@ -126,7 +136,7 @@ public class UrlShorteningService {
         transactionTemplate.executeWithoutResult(status -> {
             int updatedRows = shortUrlRepository.incrementAccessCountByAlias(alias);
             if (updatedRows == 0) {
-                originalUrlCache.remove(alias);
+                originalUrlCache.invalidate(alias);
                 throw new ShortUrlNotFoundException(alias);
             }
         });
