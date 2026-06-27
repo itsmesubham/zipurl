@@ -1,11 +1,8 @@
 package com.example.zipurl.service;
 
-import java.time.Duration;
 import java.util.Locale;
 import java.util.Set;
 
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
 import com.example.zipurl.dto.CreateShortUrlRequest;
 import com.example.zipurl.exception.AliasAlreadyExistsException;
 import com.example.zipurl.exception.AliasGenerationException;
@@ -29,22 +26,20 @@ public class UrlShorteningService {
     private final AccessCountService accessCountService;
     private final ShortUrlRepository shortUrlRepository;
     private final TransactionTemplate transactionTemplate;
-    // ponytail: local bounded cache; use Redis or another shared cache when running multiple app instances.
-    private final Cache<String, String> originalUrlCache = Caffeine.newBuilder()
-            .maximumSize(100_000)
-            .expireAfterAccess(Duration.ofHours(1))
-            .build();
+    private final UrlCacheService urlCacheService;
 
     public UrlShorteningService(
             AliasGenerator aliasGenerator,
             AccessCountService accessCountService,
             ShortUrlRepository shortUrlRepository,
-            PlatformTransactionManager transactionManager
+            PlatformTransactionManager transactionManager,
+            UrlCacheService urlCacheService
     ) {
         this.aliasGenerator = aliasGenerator;
         this.accessCountService = accessCountService;
         this.shortUrlRepository = shortUrlRepository;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.urlCacheService = urlCacheService;
     }
 
     public ShortUrl createShortUrl(CreateShortUrlRequest request) {
@@ -59,11 +54,11 @@ public class UrlShorteningService {
     }
 
     public String resolveOriginalUrl(String alias) {
-        String originalUrl = originalUrlCache.get(alias, this::loadOriginalUrl);
+        String originalUrl = urlCacheService.getOriginalUrl(alias, this::loadOriginalUrl);
         try {
             accessCountService.recordAccess(alias);
         } catch (ShortUrlNotFoundException exception) {
-            originalUrlCache.invalidate(alias);
+            urlCacheService.invalidate(alias);
             throw exception;
         }
 
@@ -73,10 +68,6 @@ public class UrlShorteningService {
     public ShortUrl getShortUrl(String alias) {
         return shortUrlRepository.findByAlias(alias)
                 .orElseThrow(() -> new ShortUrlNotFoundException(alias));
-    }
-
-    public long pendingAccessCount(String alias) {
-        return accessCountService.pendingAccessCount(alias);
     }
 
     private ShortUrl createWithCustomAlias(String alias, String originalUrl) {
@@ -92,7 +83,7 @@ public class UrlShorteningService {
 
                 return shortUrlRepository.saveAndFlush(new ShortUrl(alias, originalUrl));
             });
-            originalUrlCache.put(shortUrl.getAlias(), shortUrl.getOriginalUrl());
+            urlCacheService.putOriginalUrl(shortUrl.getAlias(), shortUrl.getOriginalUrl());
             return shortUrl;
         } catch (DataIntegrityViolationException exception) {
             throw new AliasAlreadyExistsException(alias, exception);
@@ -111,7 +102,7 @@ public class UrlShorteningService {
                 ShortUrl shortUrl = transactionTemplate.execute(status ->
                         shortUrlRepository.saveAndFlush(new ShortUrl(alias, originalUrl))
                 );
-                originalUrlCache.put(shortUrl.getAlias(), shortUrl.getOriginalUrl());
+                urlCacheService.putOriginalUrl(shortUrl.getAlias(), shortUrl.getOriginalUrl());
                 return shortUrl;
             } catch (DataIntegrityViolationException exception) {
                 // A concurrent request may have claimed the alias first; try a fresh transaction.

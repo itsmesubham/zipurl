@@ -10,6 +10,10 @@ spring:
     hibernate:
       ddl-auto: update
     open-in-view: false
+  data:
+    redis:
+      repositories:
+        enabled: false
   h2:
     console:
       enabled: true
@@ -20,10 +24,8 @@ server:
 zipurl:
   generated-alias-length: 8
   max-generated-alias-attempts: 10
-  access-count:
-    mode: db
-    flush-interval-ms: 5000
-    flush-batch-size: 1000
+  url-cache:
+    mode: local
   reserved-aliases:
     - api
     - health
@@ -55,5 +57,5 @@ spring:
       enabled: false
 
 zipurl:
-  access-count:
-    mode: ${ZIPURL_ACCESS_COUNT_MODE:valkey}
+  url-cache:
+    mode: ${ZIPURL_URL_CACHE_MODE:valkey}

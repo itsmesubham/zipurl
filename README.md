@@ -22,13 +22,12 @@ flowchart LR
     subgraph serviceLayer [Service Layer]
         urlService["UrlShorteningService\ncreate, resolve, metadata"]
         aliasGenerator["AliasGenerator\nBase62 aliases"]
-        accessCounter["AccessCountService\nDB or Valkey mode"]
+        accessCounter["AccessCountService\nPostgres increment"]
     end
 
-    subgraph cacheLayer [Cache And Counters]
+    subgraph cacheLayer [Cache]
         caffeine["Caffeine\nalias to originalUrl"]
-        valkey["Valkey optional\nbatched access counters"]
-        countFlusher["Scheduled flusher\nValkey to Postgres"]
+        valkey["Valkey optional\nshared alias cache"]
     end
 
     subgraph storageLayer [Storage]
@@ -41,12 +40,10 @@ flowchart LR
     redirectController --> urlService
     urlService --> aliasGenerator
     urlService --> caffeine
+    urlService --> valkey
     urlService --> accessCounter
     urlService --> postgres
     accessCounter --> postgres
-    accessCounter --> valkey
-    valkey --> countFlusher
-    countFlusher --> postgres
     apiLayer --> exceptionHandler
 ```
 
@@ -54,9 +51,10 @@ Low-level details:
 
 - `POST /api/urls` creates aliases and persists canonical URL state in Postgres.
 - `GET /{alias}` resolves aliases through Caffeine plus Postgres and records access counts.
-- `GET /api/urls/{alias}` reads metadata from Postgres and adds pending Valkey counts when Valkey mode is enabled.
+- `GET /api/urls/{alias}` reads metadata from Postgres.
 - Postgres remains the source of truth for aliases, original URLs, creation time, and persisted access counts.
-- Valkey is an optional write buffer for access counts, not the canonical URL store.
+- Caffeine is the local read cache for redirects.
+- Valkey can be enabled as an optional shared L2 cache for alias-to-original-URL entries.
 
 ### Creation Flow
 
@@ -117,7 +115,8 @@ flowchart LR
 
     subgraph resolver [Resolver]
         urlService["UrlShorteningService.resolveOriginalUrl"]
-        caffeine["Caffeine atomic get\nprevents cache stampede"]
+        caffeine["Caffeine L1 cache\natomic local get"]
+        valkey["Valkey L2 cache\noptional shared cache"]
         loader["Cache loader\nfindByAlias"]
     end
 
@@ -127,8 +126,7 @@ flowchart LR
 
     subgraph counting [Access Counting]
         accessCounter["AccessCountService"]
-        dbMode["DB mode\nsingle row increment"]
-        valkeyMode["Valkey mode\nINCR plus dirty set"]
+        dbMode["Postgres update\nsingle row increment"]
     end
 
     subgraph response [Response]
@@ -139,17 +137,20 @@ flowchart LR
     redirectRequest --> aliasValidation --> redirectController --> urlService
     urlService --> caffeine
     caffeine -->|"hit"| accessCounter
-    caffeine -->|"miss"| loader --> postgres
-    postgres -->|"found"| caffeine
+    caffeine -->|"miss"| valkey
+    valkey -->|"hit"| accessCounter
+    valkey -->|"miss"| loader --> postgres
+    postgres -->|"found"| valkey
+    valkey --> caffeine
     postgres -->|"missing"| notFound
     accessCounter --> dbMode
-    accessCounter --> valkeyMode
     accessCounter --> redirect302
 ```
 
 Low-level details:
 
-- Caffeine uses atomic loading for cache misses, which avoids many concurrent requests stampeding Postgres for the same hot alias.
+- Caffeine uses atomic local loading, which avoids many same-instance concurrent requests stampeding Postgres for the same hot alias.
+- Valkey can be used as a shared L2 cache across app instances; Postgres remains the source of truth.
 - Redirects return only `302` plus the `Location` header. Metadata is available through the API endpoint instead.
 - If the alias disappears from Postgres while still cached, the access-count service can reject the update and the local cache entry is invalidated.
 
@@ -163,48 +164,27 @@ flowchart LR
     end
 
     subgraph abstraction [AccessCountService]
-        interface["recordAccess\npendingAccessCount"]
-        mode{"Configured mode"}
+        interface["recordAccess"]
     end
 
-    subgraph dbMode [DB Mode]
+    subgraph dbMode [Postgres Counting]
         dbIncrement["UPDATE short_urls\naccess_count = access_count + 1"]
-    end
-
-    subgraph valkeyMode [Valkey Mode]
-        incr["INCR zipurl:access:{alias}"]
-        dirty["SADD zipurl:access:dirty alias"]
-        pendingRead["GET zipurl:access:{alias}"]
-        flusher["Scheduled flusher"]
-        drain["GETDEL pending count"]
-        batchUpdate["UPDATE short_urls\naccess_count = access_count + delta"]
     end
 
     subgraph storage [Storage]
         postgres["Postgres"]
-        valkeyStore["Valkey"]
     end
 
-    redirectFlow --> interface --> mode
-    metadataFlow --> interface
-    mode -->|"db"| dbIncrement --> postgres
-    mode -->|"valkey"| incr --> valkeyStore
-    incr --> dirty --> valkeyStore
-    metadataFlow --> pendingRead --> valkeyStore
-    flusher --> dirty
-    flusher --> drain --> valkeyStore
-    drain --> batchUpdate --> postgres
+    redirectFlow --> interface --> dbIncrement --> postgres
+    metadataFlow --> postgres
 ```
 
 Low-level details:
 
-- Default mode is `db`, which writes every redirect count directly to Postgres.
-- `valkey` mode reduces redirect-time database writes by buffering counts in Valkey.
-- Metadata returns persisted Postgres count plus pending Valkey count.
-- Valkey batching is eventually consistent. If counts become billing-critical or must be lossless, use direct DB writes or a durable event stream.
-- Current Valkey keys:
-  - `zipurl:access:{alias}` stores the pending count.
-  - `zipurl:access:dirty` stores aliases with pending counts.
+- Every successful redirect performs an atomic Postgres increment.
+- This is the simplest correct counting model and avoids buffered-counter loss windows.
+- Metadata reads the persisted Postgres count.
+- If redirect traffic grows enough that this becomes a write bottleneck, move counting to a durable event stream rather than a lossy cache buffer.
 
 ### Metadata Flow
 
@@ -218,30 +198,26 @@ flowchart LR
 
     subgraph service [Service Layer]
         getShortUrl["UrlShorteningService.getShortUrl"]
-        pendingCount["AccessCountService.pendingAccessCount"]
     end
 
     subgraph stores [Stores]
         postgres["Postgres persisted metadata"]
-        valkey["Valkey pending count\nonly in valkey mode"]
     end
 
     subgraph response [Response]
-        responseDto["ShortUrlResponse\npersisted plus pending count"]
+        responseDto["ShortUrlResponse\npersisted metadata"]
     end
 
     metadataRequest --> aliasValidation --> urlController
     urlController --> getShortUrl --> postgres
-    urlController --> pendingCount --> valkey
     postgres --> responseDto
-    valkey --> responseDto
 ```
 
 Low-level details:
 
 - Metadata lookup does not redirect and does not increment `accessCount`.
 - The response includes `alias`, `shortUrl`, `originalUrl`, `createdAt`, and `accessCount`.
-- In Valkey mode, `accessCount` includes both flushed and unflushed counts.
+- `accessCount` is the persisted Postgres count.
 
 ## API
 
@@ -276,14 +252,15 @@ The `postgres` profile uses:
 - Username: `doadmin`
 - SSL mode: `require`
 
-Valkey access-count batching uses:
+Valkey shared URL cache uses:
 
 - Host: `zipurl-valkey-do-user-39324437-0.a.db.ondigitalocean.com`
 - Port: `25061`
 - Username: `default`
 - SSL: enabled
 
-Set `ZIPURL_ACCESS_COUNT_MODE=db` to bypass Valkey and write access counts directly to Postgres.
+Set `ZIPURL_URL_CACHE_MODE=local` to bypass Valkey and use only in-process Caffeine caching.
+
 
 ## Test
 
