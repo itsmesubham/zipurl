@@ -46,4 +46,14 @@ class RedirectControllerTests {
         mockMvc.perform(get("/missing123"))
                 .andExpect(status().isNotFound());
     }
+
+    @Test
+    void returnsNotFoundForExpiredAlias() throws Exception {
+        shortUrlRepository.saveAndFlush(
+                new ShortUrl("old123", "https://example.com/old", java.time.Instant.now().minusSeconds(60))
+        );
+
+        mockMvc.perform(get("/old123"))
+                .andExpect(status().isNotFound());
+    }
 }

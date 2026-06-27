@@ -1,8 +1,11 @@
 package com.example.zipurl.service;
 
+import java.time.Instant;
 import java.util.Locale;
 import java.util.Set;
+import java.util.stream.Collectors;
 
+import com.example.zipurl.config.ZipurlProperties;
 import com.example.zipurl.dto.CreateShortUrlRequest;
 import com.example.zipurl.exception.AliasAlreadyExistsException;
 import com.example.zipurl.exception.AliasGenerationException;
@@ -18,39 +21,45 @@ import org.springframework.util.StringUtils;
 @Service
 public class UrlShorteningService {
 
-    private static final int GENERATED_ALIAS_LENGTH = 8;
-    private static final int MAX_GENERATED_ALIAS_ATTEMPTS = 10;
-    private static final Set<String> RESERVED_ALIASES = Set.of("api", "health", "h2-console");
-
     private final AliasGenerator aliasGenerator;
     private final AccessCountService accessCountService;
     private final ShortUrlRepository shortUrlRepository;
     private final TransactionTemplate transactionTemplate;
     private final UrlCacheService urlCacheService;
+    private final int generatedAliasLength;
+    private final int maxGeneratedAliasAttempts;
+    private final Set<String> reservedAliases;
 
     public UrlShorteningService(
             AliasGenerator aliasGenerator,
             AccessCountService accessCountService,
             ShortUrlRepository shortUrlRepository,
             PlatformTransactionManager transactionManager,
-            UrlCacheService urlCacheService
+            UrlCacheService urlCacheService,
+            ZipurlProperties zipurlProperties
     ) {
         this.aliasGenerator = aliasGenerator;
         this.accessCountService = accessCountService;
         this.shortUrlRepository = shortUrlRepository;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.urlCacheService = urlCacheService;
+        this.generatedAliasLength = zipurlProperties.getGeneratedAliasLength();
+        this.maxGeneratedAliasAttempts = zipurlProperties.getMaxGeneratedAliasAttempts();
+        this.reservedAliases = zipurlProperties.getReservedAliases().stream()
+                .map(alias -> alias.toLowerCase(Locale.ROOT))
+                .collect(Collectors.toUnmodifiableSet());
     }
 
     public ShortUrl createShortUrl(CreateShortUrlRequest request) {
         String originalUrl = request.longUrl().trim();
         String customAlias = normalizeCustomAlias(request.customAlias());
+        Instant expiresAt = resolveExpiresAt(request.ttlSeconds());
 
         if (StringUtils.hasText(customAlias)) {
-            return createWithCustomAlias(customAlias, originalUrl);
+            return createWithCustomAlias(customAlias, originalUrl, expiresAt);
         }
 
-        return createWithGeneratedAlias(originalUrl);
+        return createWithGeneratedAlias(originalUrl, expiresAt);
     }
 
     public String resolveOriginalUrl(String alias) {
@@ -66,11 +75,15 @@ public class UrlShorteningService {
     }
 
     public ShortUrl getShortUrl(String alias) {
-        return shortUrlRepository.findByAlias(alias)
+        ShortUrl shortUrl = shortUrlRepository.findByAlias(alias)
                 .orElseThrow(() -> new ShortUrlNotFoundException(alias));
+        if (shortUrl.isExpired(Instant.now())) {
+            throw new ShortUrlNotFoundException(alias);
+        }
+        return shortUrl;
     }
 
-    private ShortUrl createWithCustomAlias(String alias, String originalUrl) {
+    private ShortUrl createWithCustomAlias(String alias, String originalUrl, Instant expiresAt) {
         if (isReservedAlias(alias)) {
             throw new AliasAlreadyExistsException(alias);
         }
@@ -81,7 +94,7 @@ public class UrlShorteningService {
                     throw new AliasAlreadyExistsException(alias);
                 }
 
-                return shortUrlRepository.saveAndFlush(new ShortUrl(alias, originalUrl));
+                return shortUrlRepository.saveAndFlush(new ShortUrl(alias, originalUrl, expiresAt));
             });
             urlCacheService.putOriginalUrl(shortUrl.getAlias(), shortUrl.getOriginalUrl());
             return shortUrl;
@@ -90,9 +103,9 @@ public class UrlShorteningService {
         }
     }
 
-    private ShortUrl createWithGeneratedAlias(String originalUrl) {
-        for (int attempt = 0; attempt < MAX_GENERATED_ALIAS_ATTEMPTS; attempt++) {
-            String alias = aliasGenerator.generate(GENERATED_ALIAS_LENGTH);
+    private ShortUrl createWithGeneratedAlias(String originalUrl, Instant expiresAt) {
+        for (int attempt = 0; attempt < maxGeneratedAliasAttempts; attempt++) {
+            String alias = aliasGenerator.generate(generatedAliasLength);
 
             if (isReservedAlias(alias)) {
                 continue;
@@ -100,7 +113,7 @@ public class UrlShorteningService {
 
             try {
                 ShortUrl shortUrl = transactionTemplate.execute(status ->
-                        shortUrlRepository.saveAndFlush(new ShortUrl(alias, originalUrl))
+                        shortUrlRepository.saveAndFlush(new ShortUrl(alias, originalUrl, expiresAt))
                 );
                 urlCacheService.putOriginalUrl(shortUrl.getAlias(), shortUrl.getOriginalUrl());
                 return shortUrl;
@@ -112,6 +125,14 @@ public class UrlShorteningService {
         throw new AliasGenerationException();
     }
 
+    private Instant resolveExpiresAt(Long ttlSeconds) {
+        if (ttlSeconds == null) {
+            return null;
+        }
+
+        return Instant.now().plusSeconds(ttlSeconds);
+    }
+
     private String normalizeCustomAlias(String customAlias) {
         if (!StringUtils.hasText(customAlias)) {
             return null;
@@ -121,13 +142,16 @@ public class UrlShorteningService {
     }
 
     private boolean isReservedAlias(String alias) {
-        return RESERVED_ALIASES.contains(alias.toLowerCase(Locale.ROOT));
+        return reservedAliases.contains(alias.toLowerCase(Locale.ROOT));
     }
 
     private String loadOriginalUrl(String alias) {
-        return shortUrlRepository.findByAlias(alias)
-                .map(ShortUrl::getOriginalUrl)
+        ShortUrl shortUrl = shortUrlRepository.findByAlias(alias)
                 .orElseThrow(() -> new ShortUrlNotFoundException(alias));
+        if (shortUrl.isExpired(Instant.now())) {
+            throw new ShortUrlNotFoundException(alias);
+        }
+        return shortUrl.getOriginalUrl();
     }
 
 }

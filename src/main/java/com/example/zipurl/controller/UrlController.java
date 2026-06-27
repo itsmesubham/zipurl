@@ -54,6 +54,7 @@ public class UrlController {
                 buildShortUrl(shortUrl.getAlias()),
                 shortUrl.getOriginalUrl(),
                 shortUrl.getCreatedAt(),
+                shortUrl.getExpiresAt(),
                 shortUrl.getAccessCount()
         );
     }

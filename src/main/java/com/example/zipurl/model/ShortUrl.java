@@ -33,6 +33,9 @@ public class ShortUrl {
     @Column(nullable = false, updatable = false)
     private Instant createdAt;
 
+    @Column
+    private Instant expiresAt;
+
     @Column(nullable = false)
     private long accessCount;
 
@@ -42,6 +45,12 @@ public class ShortUrl {
     public ShortUrl(String alias, String originalUrl) {
         this.alias = alias;
         this.originalUrl = originalUrl;
+    }
+
+    public ShortUrl(String alias, String originalUrl, Instant expiresAt) {
+        this.alias = alias;
+        this.originalUrl = originalUrl;
+        this.expiresAt = expiresAt;
     }
 
     @PrePersist
@@ -65,6 +74,14 @@ public class ShortUrl {
 
     public Instant getCreatedAt() {
         return createdAt;
+    }
+
+    public Instant getExpiresAt() {
+        return expiresAt;
+    }
+
+    public boolean isExpired(Instant now) {
+        return expiresAt != null && !expiresAt.isAfter(now);
     }
 
     public long getAccessCount() {

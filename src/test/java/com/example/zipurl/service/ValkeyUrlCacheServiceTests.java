@@ -9,12 +9,15 @@ import static org.mockito.Mockito.when;
 
 import java.time.Duration;
 
+import com.example.zipurl.config.ZipurlProperties;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.RedisConnectionFailureException;
 
 class ValkeyUrlCacheServiceTests {
+
+    private final ZipurlProperties zipurlProperties = new ZipurlProperties();
 
     @Test
     void getOriginalUrlFallsBackToLoaderWhenValkeyReadFails() {
@@ -24,7 +27,7 @@ class ValkeyUrlCacheServiceTests {
         when(valueOperations.get("zipurl:url:abc123"))
                 .thenThrow(new RedisConnectionFailureException("Valkey unavailable"));
 
-        ValkeyUrlCacheService cacheService = new ValkeyUrlCacheService(redisTemplate);
+        ValkeyUrlCacheService cacheService = new ValkeyUrlCacheService(redisTemplate, zipurlProperties);
 
         String originalUrl = cacheService.getOriginalUrl("abc123", alias -> "https://example.com/fallback");
 
@@ -40,7 +43,7 @@ class ValkeyUrlCacheServiceTests {
                 .when(valueOperations)
                 .set(eq("zipurl:url:abc123"), eq("https://example.com"), any(Duration.class));
 
-        ValkeyUrlCacheService cacheService = new ValkeyUrlCacheService(redisTemplate);
+        ValkeyUrlCacheService cacheService = new ValkeyUrlCacheService(redisTemplate, zipurlProperties);
 
         assertThatCode(() -> cacheService.putOriginalUrl("abc123", "https://example.com"))
                 .doesNotThrowAnyException();
@@ -52,7 +55,7 @@ class ValkeyUrlCacheServiceTests {
         when(redisTemplate.delete("zipurl:url:abc123"))
                 .thenThrow(new RedisConnectionFailureException("Valkey unavailable"));
 
-        ValkeyUrlCacheService cacheService = new ValkeyUrlCacheService(redisTemplate);
+        ValkeyUrlCacheService cacheService = new ValkeyUrlCacheService(redisTemplate, zipurlProperties);
 
         assertThatCode(() -> cacheService.invalidate("abc123"))
                 .doesNotThrowAnyException();

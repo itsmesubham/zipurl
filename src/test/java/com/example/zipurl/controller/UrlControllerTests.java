@@ -1,7 +1,11 @@
 package com.example.zipurl.controller;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import com.example.zipurl.model.ShortUrl;
 
 import com.example.zipurl.repository.ShortUrlRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -49,5 +53,42 @@ class UrlControllerTests {
                                 }
                                 """))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void createWithTtlReturnsExpiresAt() throws Exception {
+        mockMvc.perform(post("/api/urls")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "longUrl": "https://example.com/ttl",
+                                  "ttlSeconds": 3600
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.expiresAt").isNotEmpty());
+    }
+
+    @Test
+    void rejectsNonPositiveTtl() throws Exception {
+        mockMvc.perform(post("/api/urls")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "longUrl": "https://example.com/ttl",
+                                  "ttlSeconds": 0
+                                }
+                                """))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void metadataReturnsNotFoundForExpiredAlias() throws Exception {
+        shortUrlRepository.saveAndFlush(
+                new ShortUrl("expmeta1", "https://example.com/old", java.time.Instant.now().minusSeconds(60))
+        );
+
+        mockMvc.perform(get("/api/urls/expmeta1"))
+                .andExpect(status().isNotFound());
     }
 }

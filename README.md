@@ -99,6 +99,7 @@ Low-level details:
 
 - `CreateShortUrlRequest.longUrl` must be a valid URL.
 - `customAlias` is optional and limited to letters, numbers, `_`, and `-`.
+- `ttlSeconds` is optional (must be `>= 1`); when set, the link expires that many seconds after creation and resolves/metadata return `404` once expired.
 - The app does a fast `existsByAlias` check for custom aliases, but the Postgres unique constraint is the real race-condition guard.
 - Generated alias collisions are retried with a fresh alias.
 - Custom alias collisions return `409 Conflict`.
@@ -221,7 +222,7 @@ Low-level details:
 
 ## API
 
-- `POST /api/urls` creates a short URL. `longUrl` must be a valid URL; `customAlias` is optional.
+- `POST /api/urls` creates a short URL. `longUrl` must be a valid URL; `customAlias` and `ttlSeconds` (link lifetime in seconds) are optional. The response includes `expiresAt` (null when no TTL was set).
 - `GET /{alias}` redirects to the original URL and increments `accessCount`.
 - `GET /api/urls/{alias}` returns metadata without incrementing `accessCount`.
 

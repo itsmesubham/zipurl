@@ -7,6 +7,7 @@ public record ShortUrlResponse(
         String shortUrl,
         String originalUrl,
         Instant createdAt,
+        Instant expiresAt,
         long accessCount
 ) {
 }

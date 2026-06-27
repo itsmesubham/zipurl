@@ -1,7 +1,10 @@
 package com.example.zipurl.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Queue;
 import java.util.concurrent.Callable;
@@ -14,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 
 import com.example.zipurl.dto.CreateShortUrlRequest;
 import com.example.zipurl.exception.AliasAlreadyExistsException;
+import com.example.zipurl.exception.ShortUrlNotFoundException;
 import com.example.zipurl.model.ShortUrl;
 import com.example.zipurl.repository.ShortUrlRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -48,7 +52,7 @@ class UrlShorteningServiceTests {
         aliasGenerator.useAliases("taken001", "fresh001");
 
         ShortUrl shortUrl = urlShorteningService.createShortUrl(
-                new CreateShortUrlRequest("https://example.com/new", null)
+                new CreateShortUrlRequest("https://example.com/new", null, null)
         );
 
         assertThat(shortUrl.getAlias()).isEqualTo("fresh001");
@@ -67,7 +71,7 @@ class UrlShorteningServiceTests {
                         startLatch.await();
                         try {
                             return urlShorteningService.createShortUrl(
-                                    new CreateShortUrlRequest("https://example.com/" + index, "shared01")
+                                    new CreateShortUrlRequest("https://example.com/" + index, "shared01", null)
                             );
                         } catch (AliasAlreadyExistsException exception) {
                             return exception;
@@ -118,6 +122,49 @@ class UrlShorteningServiceTests {
         } finally {
             executorService.shutdownNow();
         }
+    }
+
+    @Test
+    void createWithTtlStoresExpiry() {
+        Instant before = Instant.now();
+
+        ShortUrl shortUrl = urlShorteningService.createShortUrl(
+                new CreateShortUrlRequest("https://example.com/ttl", "ttl-link", 3600L)
+        );
+
+        assertThat(shortUrl.getExpiresAt())
+                .isNotNull()
+                .isAfterOrEqualTo(before.plusSeconds(3600).truncatedTo(ChronoUnit.MILLIS).minusSeconds(2));
+    }
+
+    @Test
+    void resolveTreatsExpiredLinkAsNotFound() {
+        shortUrlRepository.saveAndFlush(
+                new ShortUrl("expired1", "https://example.com/old", Instant.now().minusSeconds(60))
+        );
+
+        assertThatThrownBy(() -> urlShorteningService.resolveOriginalUrl("expired1"))
+                .isInstanceOf(ShortUrlNotFoundException.class);
+    }
+
+    @Test
+    void metadataTreatsExpiredLinkAsNotFound() {
+        shortUrlRepository.saveAndFlush(
+                new ShortUrl("expired2", "https://example.com/old", Instant.now().minusSeconds(60))
+        );
+
+        assertThatThrownBy(() -> urlShorteningService.getShortUrl("expired2"))
+                .isInstanceOf(ShortUrlNotFoundException.class);
+    }
+
+    @Test
+    void resolveReturnsUrlForUnexpiredLink() {
+        shortUrlRepository.saveAndFlush(
+                new ShortUrl("active1", "https://example.com/active", Instant.now().plusSeconds(3600))
+        );
+
+        assertThat(urlShorteningService.resolveOriginalUrl("active1"))
+                .isEqualTo("https://example.com/active");
     }
 
     private Object getResult(Future<Object> future) {

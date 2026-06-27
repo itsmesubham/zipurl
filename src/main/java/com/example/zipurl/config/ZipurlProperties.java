@@ -1,5 +1,6 @@
 package com.example.zipurl.config;
 
+import java.time.Duration;
 import java.util.Set;
 
 import jakarta.validation.constraints.Max;
@@ -26,6 +27,13 @@ public class ZipurlProperties {
     @NotEmpty
     private Set<String> reservedAliases = Set.of("api", "health", "h2-console");
 
+    @Min(1)
+    private long localCacheMaxSize = 100_000;
+
+    private Duration localCacheExpireAfterAccess = Duration.ofHours(1);
+
+    private Duration sharedCacheTtl = Duration.ofHours(6);
+
     public int getGeneratedAliasLength() {
         return generatedAliasLength;
     }
@@ -48,5 +56,29 @@ public class ZipurlProperties {
 
     public void setReservedAliases(Set<String> reservedAliases) {
         this.reservedAliases = reservedAliases;
+    }
+
+    public long getLocalCacheMaxSize() {
+        return localCacheMaxSize;
+    }
+
+    public void setLocalCacheMaxSize(long localCacheMaxSize) {
+        this.localCacheMaxSize = localCacheMaxSize;
+    }
+
+    public Duration getLocalCacheExpireAfterAccess() {
+        return localCacheExpireAfterAccess;
+    }
+
+    public void setLocalCacheExpireAfterAccess(Duration localCacheExpireAfterAccess) {
+        this.localCacheExpireAfterAccess = localCacheExpireAfterAccess;
+    }
+
+    public Duration getSharedCacheTtl() {
+        return sharedCacheTtl;
+    }
+
+    public void setSharedCacheTtl(Duration sharedCacheTtl) {
+        this.sharedCacheTtl = sharedCacheTtl;
     }
 }

@@ -1,10 +1,10 @@
 package com.example.zipurl.service;
 
-import java.time.Duration;
 import java.util.function.Function;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
+import com.example.zipurl.config.ZipurlProperties;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -15,16 +15,21 @@ import org.springframework.stereotype.Service;
 public class ValkeyUrlCacheService implements UrlCacheService {
 
     private static final String URL_CACHE_KEY_PREFIX = "zipurl:url:";
-    private static final Duration VALKEY_TTL = Duration.ofHours(6);
 
-    private final Cache<String, String> localCache = Caffeine.newBuilder()
-            .maximumSize(100_000)
-            .expireAfterAccess(Duration.ofHours(1))
-            .build();
+    private final Cache<String, String> localCache;
     private final StringRedisTemplate redisTemplate;
+    private final ZipurlProperties zipurlProperties;
 
-    public ValkeyUrlCacheService(StringRedisTemplate redisTemplate) {
+    public ValkeyUrlCacheService(
+            StringRedisTemplate redisTemplate,
+            ZipurlProperties zipurlProperties
+    ) {
         this.redisTemplate = redisTemplate;
+        this.zipurlProperties = zipurlProperties;
+        this.localCache = Caffeine.newBuilder()
+                .maximumSize(zipurlProperties.getLocalCacheMaxSize())
+                .expireAfterAccess(zipurlProperties.getLocalCacheExpireAfterAccess())
+                .build();
     }
 
     @Override
@@ -36,7 +41,7 @@ public class ValkeyUrlCacheService implements UrlCacheService {
     public void putOriginalUrl(String alias, String originalUrl) {
         localCache.put(alias, originalUrl);
         try {
-            redisTemplate.opsForValue().set(cacheKey(alias), originalUrl, VALKEY_TTL);
+            redisTemplate.opsForValue().set(cacheKey(alias), originalUrl, zipurlProperties.getSharedCacheTtl());
         } catch (DataAccessException exception) {
             // Cache warming is best-effort; Postgres remains the source of truth.
         }
@@ -64,7 +69,7 @@ public class ValkeyUrlCacheService implements UrlCacheService {
 
         String originalUrl = loader.apply(alias);
         try {
-            redisTemplate.opsForValue().set(cacheKey(alias), originalUrl, VALKEY_TTL);
+            redisTemplate.opsForValue().set(cacheKey(alias), originalUrl, zipurlProperties.getSharedCacheTtl());
         } catch (DataAccessException exception) {
             // Cache fill is best-effort; return the DB-loaded value.
         }
