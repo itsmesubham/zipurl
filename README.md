@@ -268,6 +268,15 @@ Valkey shared URL cache uses:
 
 Set `ZIPURL_URL_CACHE_MODE=local` to bypass Valkey and use only in-process Caffeine caching.
 
+### Schema Migrations
+
+The `postgres` profile keeps Hibernate on `ddl-auto: validate` (it never alters the production schema) and manages schema changes with Flyway migrations in `src/main/resources/db/migration`:
+
+- `V1__create_short_urls.sql` — the original table; on an already-provisioned database Flyway baselines it (`baseline-on-migrate: true`, `baseline-version: 1`) and skips this script.
+- `V2__add_expires_at.sql` — adds the `expires_at` column for the TTL feature.
+
+Flyway runs before Hibernate validation on startup, so deploying a build that adds an entity column will migrate the live schema automatically (no manual `ALTER TABLE` and no `ddl-auto=update` in production). The H2/local profile has Flyway disabled and continues to use `ddl-auto: update`.
+
 
 ## Test
 
