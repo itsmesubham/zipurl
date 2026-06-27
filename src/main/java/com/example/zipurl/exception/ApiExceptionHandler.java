@@ -17,6 +17,22 @@ import org.springframework.web.server.ResponseStatusException;
 @RestControllerAdvice
 public class ApiExceptionHandler {
 
+    @ExceptionHandler(AliasAlreadyExistsException.class)
+    public ResponseEntity<ErrorResponse> handleAliasAlreadyExists(
+            AliasAlreadyExistsException exception,
+            HttpServletRequest request
+    ) {
+        return buildErrorResponse(HttpStatus.CONFLICT, exception.getMessage(), request.getRequestURI());
+    }
+
+    @ExceptionHandler(AliasGenerationException.class)
+    public ResponseEntity<ErrorResponse> handleAliasGeneration(
+            AliasGenerationException exception,
+            HttpServletRequest request
+    ) {
+        return buildErrorResponse(HttpStatus.SERVICE_UNAVAILABLE, exception.getMessage(), request.getRequestURI());
+    }
+
     @ExceptionHandler(ResponseStatusException.class)
     public ResponseEntity<ErrorResponse> handleResponseStatusException(
             ResponseStatusException exception,
