@@ -243,7 +243,7 @@ mvn spring-boot:run
 ```bash
 export ZIPURL_DB_PASSWORD='<database-password>'
 export ZIPURL_VALKEY_PASSWORD='<valkey-password>'
-SPRING_PROFILES_ACTIVE=postgres ZIPURL_DB_MAX_POOL=2 mvn spring-boot:run
+SPRING_PROFILES_ACTIVE=postgres ZIPURL_DB_MAX_POOL=1 mvn spring-boot:run
 ```
 
 The `postgres` profile uses:
@@ -258,7 +258,7 @@ The Docker image defaults to `SPRING_PROFILES_ACTIVE=postgres` so DigitalOcean A
 
 - `ZIPURL_DB_PASSWORD`
 - `ZIPURL_VALKEY_PASSWORD`
-- `ZIPURL_DB_MAX_POOL=2`
+- `ZIPURL_DB_MAX_POOL=1`
 - `ZIPURL_DB_MIN_IDLE=0`
 - `ZIPURL_DB_CONNECTION_TIMEOUT=10000`
 - `ZIPURL_DB_IDLE_TIMEOUT=30000`
@@ -294,7 +294,7 @@ Managed Postgres has a hard connection cap (DigitalOcean reserves several slots 
 
 | Property | Env var | Default |
 | --- | --- | --- |
-| `maximum-pool-size` | `ZIPURL_DB_MAX_POOL` | `2` |
+| `maximum-pool-size` | `ZIPURL_DB_MAX_POOL` | `1` |
 | `minimum-idle` | `ZIPURL_DB_MIN_IDLE` | `0` |
 | `connection-timeout` | `ZIPURL_DB_CONNECTION_TIMEOUT` | `10000` ms |
 | `idle-timeout` | `ZIPURL_DB_IDLE_TIMEOUT` | `30000` ms |
@@ -304,9 +304,9 @@ Managed Postgres has a hard connection cap (DigitalOcean reserves several slots 
 
 Budget connections as `app_instances * ZIPURL_DB_MAX_POOL + migration/headroom` and keep it under the database's limit. For small managed Postgres plans:
 
-- 1 instance: set `ZIPURL_DB_MAX_POOL=2`
-- 2 instances: set `ZIPURL_DB_MAX_POOL=2`
-- more instances: use DigitalOcean PgBouncer or the connection-pool endpoint instead of direct database connections
+- 1 instance: set `ZIPURL_DB_MAX_POOL=1`
+- 2 instances: use DigitalOcean PgBouncer or the connection-pool endpoint instead of direct database connections
+- more instances: do not connect directly to the database; use a pooler
 
 The startup failure `FATAL: remaining connection slots are reserved for roles with the SUPERUSER attribute` means the database is out of slots: reduce `ZIPURL_DB_MAX_POOL` and/or instance count, terminate leftover connections (`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'defaultdb' AND state = 'idle' AND pid <> pg_backend_pid();`), or restart the database.
 

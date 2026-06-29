@@ -63,8 +63,9 @@ spring:
     driver-class-name: org.postgresql.Driver
     hikari:
       # Keep each instance's connection footprint small so app replicas and Flyway stay
-      # within the managed Postgres connection cap.
-      maximum-pool-size: ${ZIPURL_DB_MAX_POOL:2}
+      # within the managed Postgres connection cap. The default is 1 because this
+      # managed database tier reserves its remaining slots for superuser/maintenance.
+      maximum-pool-size: ${ZIPURL_DB_MAX_POOL:1}
       minimum-idle: ${ZIPURL_DB_MIN_IDLE:0}
       connection-timeout: ${ZIPURL_DB_CONNECTION_TIMEOUT:10000}
       idle-timeout: ${ZIPURL_DB_IDLE_TIMEOUT:30000}
