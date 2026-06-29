@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.concurrent.Semaphore;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -24,12 +25,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.util.StringUtils;
 
 @Service
@@ -104,7 +108,7 @@ public class UrlShorteningService {
     public ShortUrl createShortUrl(CreateShortUrlRequest request) {
         if (!createSemaphore.tryAcquire()) {
             createRejectedCounter.increment();
-            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Create capacity exhausted");
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Create capacity exhausted");
         }
 
         try {
@@ -178,15 +182,14 @@ public class UrlShorteningService {
         }
 
         try {
-            ShortUrl shortUrl = transactionTemplate.execute(status -> {
+            ShortUrl shortUrl = Objects.requireNonNull(transactionTemplate.execute(status -> {
                 if (shortUrlRepository.existsByAlias(alias)) {
                     throw new AliasAlreadyExistsException(alias);
                 }
 
                 return shortUrlRepository.saveAndFlush(new ShortUrl(alias, originalUrl, expiresAt));
-            });
-            urlCacheService.putResolvedUrl(shortUrl.getAlias(), new CachedRedirectTarget(shortUrl.getOriginalUrl(), shortUrl.getExpiresAt()));
-            negativeCache.invalidate(shortUrl.getAlias());
+            }), "shortUrl");
+            publishCreatedTargetAfterCommit(shortUrl);
             return shortUrl;
         } catch (DataIntegrityViolationException exception) {
             throw new AliasAlreadyExistsException(alias, exception);
@@ -202,11 +205,10 @@ public class UrlShorteningService {
             }
 
             try {
-                ShortUrl shortUrl = transactionTemplate.execute(status ->
+                ShortUrl shortUrl = Objects.requireNonNull(transactionTemplate.execute(status ->
                         shortUrlRepository.saveAndFlush(new ShortUrl(alias, originalUrl, expiresAt))
-                );
-                urlCacheService.putResolvedUrl(shortUrl.getAlias(), new CachedRedirectTarget(shortUrl.getOriginalUrl(), shortUrl.getExpiresAt()));
-                negativeCache.invalidate(shortUrl.getAlias());
+                ), "shortUrl");
+                publishCreatedTargetAfterCommit(shortUrl);
                 return shortUrl;
             } catch (DataIntegrityViolationException exception) {
                 // A concurrent request may have claimed the alias first; try a fresh transaction.
@@ -237,18 +239,24 @@ public class UrlShorteningService {
     }
 
     private CachedRedirectTarget loadRedirectTarget(String alias) {
-        CachedRedirectTarget redirectTarget = jdbcTemplate.query(
-                        """
-                                SELECT original_url, expires_at
-                                FROM short_urls
-                                WHERE alias = ?
-                                """,
-                        this::mapRedirectTarget,
-                        alias
-                )
-                .stream()
-                .findFirst()
-                .orElseThrow(() -> new ShortUrlNotFoundException(alias));
+        CachedRedirectTarget redirectTarget;
+        try {
+            redirectTarget = jdbcTemplate.queryForObject(
+                    """
+                            SELECT original_url, expires_at
+                            FROM short_urls
+                            WHERE alias = ?
+                            """,
+                    this::mapRedirectTarget,
+                    alias
+            );
+        } catch (EmptyResultDataAccessException exception) {
+            throw new ShortUrlNotFoundException(alias);
+        }
+
+        if (redirectTarget == null) {
+            throw new ShortUrlNotFoundException(alias);
+        }
 
         Instant now = Instant.now();
         if (redirectTarget.isExpired(now)) {
@@ -256,6 +264,26 @@ public class UrlShorteningService {
             throw new ShortUrlNotFoundException(alias);
         }
         return redirectTarget;
+    }
+
+    private void publishCreatedTargetAfterCommit(ShortUrl shortUrl) {
+        CachedRedirectTarget resolvedUrl = new CachedRedirectTarget(shortUrl.getOriginalUrl(), shortUrl.getExpiresAt());
+        Runnable writeThrough = () -> {
+            urlCacheService.putResolvedUrl(shortUrl.getAlias(), resolvedUrl);
+            negativeCache.invalidate(shortUrl.getAlias());
+        };
+
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    writeThrough.run();
+                }
+            });
+            return;
+        }
+
+        writeThrough.run();
     }
 
     private CachedRedirectTarget mapRedirectTarget(ResultSet resultSet, int rowNum) throws SQLException {

@@ -1,5 +1,7 @@
 package com.example.zipurl.service;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.function.Function;
 
 import com.example.zipurl.config.ZipurlProperties;
@@ -52,60 +54,53 @@ public class ValkeyUrlCacheService implements UrlCacheService {
     public CachedRedirectTarget getResolvedUrl(String alias, Function<String, CachedRedirectTarget> loader) {
         CachedRedirectTarget cached = localCache.getIfPresent(alias);
         if (cached != null) {
-            cacheHitCounter.increment();
-            return cached;
+            if (cached.isExpired(Instant.now())) {
+                invalidate(alias);
+            } else {
+                cacheHitCounter.increment();
+                return cached;
+            }
         }
 
-        try {
-            String cachedValue = redisTemplate.opsForValue().get(cacheKey(alias));
-            if (cachedValue != null) {
-                CachedRedirectTarget resolvedUrl = objectMapper.readValue(cachedValue, CachedRedirectTarget.class);
-                localCache.put(alias, resolvedUrl);
-                cacheHitCounter.increment();
-                return resolvedUrl;
+        if (zipurlProperties.isValkeyEnabled()) {
+            try {
+                String cachedValue = redisTemplate.opsForValue().get(cacheKey(alias));
+                if (cachedValue != null) {
+                    CachedRedirectTarget resolvedUrl = objectMapper.readValue(cachedValue, CachedRedirectTarget.class);
+                    if (resolvedUrl.isExpired(Instant.now())) {
+                        invalidate(alias);
+                    } else {
+                        localCache.put(alias, resolvedUrl);
+                        cacheHitCounter.increment();
+                        return resolvedUrl;
+                    }
+                }
+            } catch (DataAccessException exception) {
+                // Shared cache is best-effort; fall through to the authoritative DB lookup.
+            } catch (JsonProcessingException exception) {
+                // Invalid cache payload falls through to the authoritative DB lookup.
             }
-        } catch (DataAccessException exception) {
-            // Shared cache is best-effort; fall through to the authoritative DB lookup.
-        } catch (JsonProcessingException exception) {
-            // Invalid cache payload falls through to the authoritative DB lookup.
         }
 
         cacheMissCounter.increment();
         CachedRedirectTarget resolvedUrl = loader.apply(alias);
         localCache.put(alias, resolvedUrl);
-        try {
-            redisTemplate.opsForValue().set(
-                    cacheKey(alias),
-                    objectMapper.writeValueAsString(resolvedUrl),
-                    zipurlProperties.getSharedCacheTtl()
-            );
-        } catch (DataAccessException exception) {
-            // Cache fill is best-effort; Postgres remains the source of truth.
-        } catch (JsonProcessingException exception) {
-            // Serialization failures should not break reads.
-        }
+        writeToValkey(alias, resolvedUrl);
         return resolvedUrl;
     }
 
     @Override
     public void putResolvedUrl(String alias, CachedRedirectTarget resolvedUrl) {
         localCache.put(alias, resolvedUrl);
-        try {
-            redisTemplate.opsForValue().set(
-                    cacheKey(alias),
-                    objectMapper.writeValueAsString(resolvedUrl),
-                    zipurlProperties.getSharedCacheTtl()
-            );
-        } catch (DataAccessException exception) {
-            // Cache warming is best-effort; Postgres remains the source of truth.
-        } catch (JsonProcessingException exception) {
-            // Serialization failures should not break writes.
-        }
+        writeToValkey(alias, resolvedUrl);
     }
 
     @Override
     public void invalidate(String alias) {
         localCache.invalidate(alias);
+        if (!zipurlProperties.isValkeyEnabled()) {
+            return;
+        }
         try {
             redisTemplate.delete(cacheKey(alias));
         } catch (DataAccessException exception) {
@@ -113,7 +108,46 @@ public class ValkeyUrlCacheService implements UrlCacheService {
         }
     }
 
+    private void writeToValkey(String alias, CachedRedirectTarget resolvedUrl) {
+        if (!zipurlProperties.isValkeyEnabled()) {
+            return;
+        }
+
+        Duration ttl = resolveValkeyTtl(resolvedUrl);
+        if (ttl.isZero() || ttl.isNegative()) {
+            invalidate(alias);
+            return;
+        }
+
+        try {
+            redisTemplate.opsForValue().set(
+                    cacheKey(alias),
+                    objectMapper.writeValueAsString(resolvedUrl),
+                    ttl
+            );
+        } catch (DataAccessException exception) {
+            // Cache fill is best-effort; Postgres remains the source of truth.
+        } catch (JsonProcessingException exception) {
+            // Serialization failures should not break reads or writes.
+        }
+    }
+
     private String cacheKey(String alias) {
         return URL_CACHE_KEY_PREFIX + alias;
+    }
+
+    private Duration resolveValkeyTtl(CachedRedirectTarget resolvedUrl) {
+        Duration configuredTtl = Duration.ofSeconds(zipurlProperties.getValkeyTtlSeconds());
+        Instant expiresAt = resolvedUrl.expiresAt();
+        if (expiresAt == null) {
+            return configuredTtl;
+        }
+
+        Duration expiresIn = Duration.between(Instant.now(), expiresAt);
+        if (expiresIn.isZero() || expiresIn.isNegative()) {
+            return Duration.ZERO;
+        }
+
+        return configuredTtl.compareTo(expiresIn) <= 0 ? configuredTtl : expiresIn;
     }
 }

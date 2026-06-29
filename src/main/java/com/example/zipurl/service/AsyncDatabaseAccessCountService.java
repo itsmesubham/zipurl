@@ -33,7 +33,7 @@ import org.springframework.stereotype.Service;
 import jakarta.annotation.PreDestroy;
 
 @Service
-@ConditionalOnProperty(prefix = "zipurl.access-count", name = "mode", havingValue = "async", matchIfMissing = true)
+@ConditionalOnProperty(prefix = "zipurl.access-count", name = "mode", havingValue = "async")
 public class AsyncDatabaseAccessCountService implements AccessCountService {
 
     private static final Logger log = LoggerFactory.getLogger(AsyncDatabaseAccessCountService.class);

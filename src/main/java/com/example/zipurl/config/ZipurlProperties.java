@@ -1,6 +1,5 @@
 package com.example.zipurl.config;
 
-import java.time.Duration;
 import java.util.Set;
 
 import jakarta.validation.constraints.Max;
@@ -28,12 +27,10 @@ public class ZipurlProperties {
     private Set<String> reservedAliases = Set.of("api", "health", "h2-console");
 
     @Min(1)
-    private long cacheMaxSize = 100_000;
+    private long cacheMaxSize = 200_000;
 
     @Min(1)
     private long cacheExpireAfterWriteSeconds = 3_600;
-
-    private Duration sharedCacheTtl = Duration.ofHours(6);
 
     @Min(1)
     private long negativeCacheMaxSize = 50_000;
@@ -52,8 +49,18 @@ public class ZipurlProperties {
     @Min(1)
     private long accessCountBatchSize = 1_000;
 
+    private boolean valkeyEnabled = true;
+
     @Min(1)
-    private int createMaxConcurrent = 10;
+    private long valkeyTtlSeconds = 3_600;
+
+    private boolean cacheWarmupEnabled = false;
+
+    @Min(1)
+    private long cacheWarmupLimit = 50_000;
+
+    @Min(1)
+    private int createMaxConcurrent = 5;
 
     public int getGeneratedAliasLength() {
         return generatedAliasLength;
@@ -93,14 +100,6 @@ public class ZipurlProperties {
 
     public void setCacheExpireAfterWriteSeconds(long cacheExpireAfterWriteSeconds) {
         this.cacheExpireAfterWriteSeconds = cacheExpireAfterWriteSeconds;
-    }
-
-    public Duration getSharedCacheTtl() {
-        return sharedCacheTtl;
-    }
-
-    public void setSharedCacheTtl(Duration sharedCacheTtl) {
-        this.sharedCacheTtl = sharedCacheTtl;
     }
 
     public long getNegativeCacheMaxSize() {
@@ -149,6 +148,38 @@ public class ZipurlProperties {
 
     public void setAccessCountBatchSize(long accessCountBatchSize) {
         this.accessCountBatchSize = accessCountBatchSize;
+    }
+
+    public boolean isValkeyEnabled() {
+        return valkeyEnabled;
+    }
+
+    public void setValkeyEnabled(boolean valkeyEnabled) {
+        this.valkeyEnabled = valkeyEnabled;
+    }
+
+    public long getValkeyTtlSeconds() {
+        return valkeyTtlSeconds;
+    }
+
+    public void setValkeyTtlSeconds(long valkeyTtlSeconds) {
+        this.valkeyTtlSeconds = valkeyTtlSeconds;
+    }
+
+    public boolean isCacheWarmupEnabled() {
+        return cacheWarmupEnabled;
+    }
+
+    public void setCacheWarmupEnabled(boolean cacheWarmupEnabled) {
+        this.cacheWarmupEnabled = cacheWarmupEnabled;
+    }
+
+    public long getCacheWarmupLimit() {
+        return cacheWarmupLimit;
+    }
+
+    public void setCacheWarmupLimit(long cacheWarmupLimit) {
+        this.cacheWarmupLimit = cacheWarmupLimit;
     }
 
     public int getCreateMaxConcurrent() {

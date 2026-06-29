@@ -75,7 +75,7 @@ class UrlShorteningServiceTests {
 
     @Test
     void onlyOneConcurrentRequestCanClaimACustomAlias() throws Exception {
-        int requestCount = 6;
+        int requestCount = 5;
         CountDownLatch startLatch = new CountDownLatch(1);
         ExecutorService executorService = Executors.newFixedThreadPool(requestCount);
 

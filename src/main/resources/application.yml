@@ -1,6 +1,9 @@
 spring:
   application:
     name: zipurl
+  threads:
+    virtual:
+      enabled: ${ZIPURL_VIRTUAL_THREADS_ENABLED:false}
   datasource:
     url: jdbc:h2:mem:zipurl
     username: sa
@@ -57,19 +60,24 @@ zipurl:
   generated-alias-length: 8
   max-generated-alias-attempts: 10
   cache:
-    max-size: ${ZIPURL_CACHE_MAX_SIZE:100000}
+    max-size: ${ZIPURL_CACHE_MAX_SIZE:200000}
     expire-after-write-seconds: ${ZIPURL_CACHE_EXPIRE_AFTER_WRITE_SECONDS:3600}
+    warmup:
+      enabled: ${ZIPURL_CACHE_WARMUP_ENABLED:false}
+      limit: ${ZIPURL_CACHE_WARMUP_LIMIT:50000}
   negative-cache:
     max-size: ${ZIPURL_NEGATIVE_CACHE_MAX_SIZE:50000}
     ttl-seconds: ${ZIPURL_NEGATIVE_CACHE_TTL_SECONDS:60}
-  shared-cache-ttl: 6h
+  valkey:
+    enabled: ${ZIPURL_VALKEY_ENABLED:true}
+    ttl-seconds: ${ZIPURL_VALKEY_TTL_SECONDS:3600}
   access-count:
     mode: ${ZIPURL_ACCESS_COUNT_MODE:disabled}
     flush-interval-ms: ${ZIPURL_ACCESS_COUNT_FLUSH_INTERVAL_MS:2000}
     batch-size: ${ZIPURL_ACCESS_COUNT_BATCH_SIZE:1000}
     max-pending-aliases: ${ZIPURL_ACCESS_COUNT_MAX_PENDING_ALIASES:100000}
   create:
-    max-concurrent: ${ZIPURL_CREATE_MAX_CONCURRENT:10}
+    max-concurrent: ${ZIPURL_CREATE_MAX_CONCURRENT:5}
   url-cache:
     mode: local
   reserved-aliases:
@@ -81,6 +89,9 @@ spring:
   config:
     activate:
       on-profile: postgres
+  threads:
+    virtual:
+      enabled: ${ZIPURL_VIRTUAL_THREADS_ENABLED:false}
   datasource:
     url: jdbc:postgresql://${ZIPURL_DB_HOST:zipurl-do-user-39324437-0.a.db.ondigitalocean.com}:${ZIPURL_DB_PORT:25060}/${ZIPURL_DB_NAME:defaultdb}?sslmode=${ZIPURL_DB_SSLMODE:require}
     username: ${ZIPURL_DB_USERNAME:doadmin}
@@ -117,15 +128,21 @@ zipurl:
   url-cache:
     mode: ${ZIPURL_URL_CACHE_MODE:valkey}
   cache:
-    max-size: ${ZIPURL_CACHE_MAX_SIZE:100000}
+    max-size: ${ZIPURL_CACHE_MAX_SIZE:200000}
     expire-after-write-seconds: ${ZIPURL_CACHE_EXPIRE_AFTER_WRITE_SECONDS:3600}
+    warmup:
+      enabled: ${ZIPURL_CACHE_WARMUP_ENABLED:false}
+      limit: ${ZIPURL_CACHE_WARMUP_LIMIT:50000}
   negative-cache:
     max-size: ${ZIPURL_NEGATIVE_CACHE_MAX_SIZE:50000}
     ttl-seconds: ${ZIPURL_NEGATIVE_CACHE_TTL_SECONDS:60}
+  valkey:
+    enabled: ${ZIPURL_VALKEY_ENABLED:true}
+    ttl-seconds: ${ZIPURL_VALKEY_TTL_SECONDS:3600}
   access-count:
     mode: ${ZIPURL_ACCESS_COUNT_MODE:disabled}
     flush-interval-ms: ${ZIPURL_ACCESS_COUNT_FLUSH_INTERVAL_MS:2000}
     batch-size: ${ZIPURL_ACCESS_COUNT_BATCH_SIZE:1000}
     max-pending-aliases: ${ZIPURL_ACCESS_COUNT_MAX_PENDING_ALIASES:100000}
   create:
-    max-concurrent: ${ZIPURL_CREATE_MAX_CONCURRENT:10}
+    max-concurrent: ${ZIPURL_CREATE_MAX_CONCURRENT:5}

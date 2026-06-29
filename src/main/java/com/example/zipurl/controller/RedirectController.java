@@ -1,9 +1,11 @@
 package com.example.zipurl.controller;
 
+import java.net.URI;
+
 import com.example.zipurl.service.UrlShorteningService;
-import jakarta.servlet.http.HttpServletResponse;
 
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
@@ -18,10 +20,11 @@ public class RedirectController {
     }
 
     @GetMapping("/{alias:[A-Za-z0-9_-]+}")
-    public void redirectToOriginalUrl(@PathVariable String alias, HttpServletResponse response) {
+    public ResponseEntity<Void> redirectToOriginalUrl(@PathVariable String alias) {
         String originalUrl = urlShorteningService.resolveOriginalUrl(alias);
-        response.setStatus(HttpServletResponse.SC_FOUND);
-        response.setHeader(HttpHeaders.LOCATION, originalUrl);
-        response.setContentLength(0);
+        return ResponseEntity.status(302)
+                .location(URI.create(originalUrl))
+                .header(HttpHeaders.CONTENT_LENGTH, "0")
+                .build();
     }
 }

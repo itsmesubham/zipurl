@@ -1,5 +1,6 @@
 package com.example.zipurl.service;
 
+import java.time.Instant;
 import java.util.function.Function;
 
 import com.github.benmanes.caffeine.cache.Cache;
@@ -35,8 +36,12 @@ public class LocalUrlCacheService implements UrlCacheService {
     public CachedRedirectTarget getResolvedUrl(String alias, Function<String, CachedRedirectTarget> loader) {
         CachedRedirectTarget cached = cache.getIfPresent(alias);
         if (cached != null) {
-            cacheHitCounter.increment();
-            return cached;
+            if (cached.isExpired(Instant.now())) {
+                cache.invalidate(alias);
+            } else {
+                cacheHitCounter.increment();
+                return cached;
+            }
         }
 
         cacheMissCounter.increment();

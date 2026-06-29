@@ -63,7 +63,9 @@ class AsyncAccessCountModeTests {
 
     @Test
     void expiredCachedAliasDoesNotRedirectOrCount() throws Exception {
-        shortUrlRepository.saveAndFlush(new ShortUrl("async-expired", "https://example.com/expired"));
+        shortUrlRepository.saveAndFlush(
+                new ShortUrl("async-expired", "https://example.com/expired", Instant.now().minusSeconds(1))
+        );
         urlCacheService.putResolvedUrl(
                 "async-expired",
                 new CachedRedirectTarget("https://example.com/expired", Instant.now().minusSeconds(1))

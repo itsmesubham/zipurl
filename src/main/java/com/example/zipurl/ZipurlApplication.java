@@ -25,13 +25,17 @@ public class ZipurlApplication {
     @ConditionalOnBean(ZipurlProperties.class)
     ApplicationRunner startupConfigLogger(
             @Value("${server.tomcat.threads.max}") int tomcatMaxThreads,
+            @Value("${spring.threads.virtual.enabled:false}") boolean virtualThreadsEnabled,
             ZipurlProperties zipurlProperties
     ) {
         return args -> log.info(
-                "Startup config: tomcatMaxThreads={}, accessCountMode={}, cacheMaxSize={}, createMaxConcurrent={}",
+                "Startup config: tomcatMaxThreads={}, virtualThreadsEnabled={}, accessCountMode={}, cacheMaxSize={}, valkeyEnabled={}, cacheWarmupEnabled={}, createMaxConcurrent={}",
                 tomcatMaxThreads,
+                virtualThreadsEnabled,
                 zipurlProperties.getAccessCountMode(),
                 zipurlProperties.getCacheMaxSize(),
+                zipurlProperties.isValkeyEnabled(),
+                zipurlProperties.isCacheWarmupEnabled(),
                 zipurlProperties.getCreateMaxConcurrent()
         );
     }

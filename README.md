@@ -50,12 +50,13 @@ flowchart LR
 Low-level details:
 
 - `POST /api/urls` creates aliases and persists canonical URL state in Postgres.
-- `GET /{alias}` resolves aliases through Caffeine/Valkey first, falls back to a lightweight Postgres projection only on cache miss, validates expiry, and records access counts according to the configured mode.
+- `GET /{alias}` resolves aliases through Caffeine first, then Valkey if enabled, then a lightweight Postgres projection only on cache miss, validates expiry, and records access counts according to the configured mode.
 - Negative cache entries short-circuit repeated random misses for a short TTL so bots do not hammer Postgres with the same invalid aliases.
 - `GET /api/urls/{alias}` reads metadata from Postgres.
 - Postgres remains the source of truth for aliases, original URLs, creation time, and persisted access counts.
 - Caffeine is the local read cache for redirects.
 - Valkey can be enabled as an optional shared L2 cache for alias-to-original-URL plus expiry entries.
+- Create writes through to the caches after the database transaction commits so new aliases become hot without risking cache inconsistency on rollback.
 
 ### Creation Flow
 
@@ -190,7 +191,7 @@ Low-level details:
 - `async` mode batches counts by alias in memory and flushes them on a timer.
 - `disabled` mode skips access counting completely.
 - Metadata continues to read the persisted Postgres count.
-- Use `async` for production. One redirect per Postgres write does not scale to high RPS, and 1M RPS cannot be served by a single row update per request.
+- Use `disabled` when redirect throughput matters most. Enable `async` only if you need approximate counts without synchronous writes.
 - Batched writes must be grouped by alias so repeated redirects collapse into one `UPDATE ... SET access_count = access_count + :delta`.
 
 ### Metadata Flow
@@ -229,18 +230,20 @@ Low-level details:
 ## API
 
 - `POST /api/urls` creates a short URL. `longUrl` must be a valid URL; `customAlias` and `ttlSeconds` (link lifetime in seconds) are optional. The response includes `expiresAt` (null when no TTL was set).
-- `GET /{alias}` redirects to the original URL and increments `accessCount`.
+- `GET /{alias}` redirects to the original URL and increments `accessCount` according to the selected counting mode.
 - `GET /api/urls/{alias}` returns metadata without incrementing `accessCount`.
 
 ## Access Count Modes
 
 - `sync`: direct Postgres increment on every redirect, useful when you want the simplest correctness-first behavior.
-- `async`: default production mode; redirects increment an in-memory `LongAdder`, then a scheduled flusher batches deltas by alias and writes them to Postgres.
-- `disabled`: skips counting entirely for raw redirect benchmarks or temporary hot-path validation.
+- `async`: opt-in buffered counting mode; redirects increment an in-memory `LongAdder`, then a scheduled flusher batches deltas by alias and writes them to Postgres.
+- `disabled`: default mode; skips counting entirely for raw redirect benchmarks or temporary hot-path validation.
 
 Default behavior is `disabled`, so redirects stay cache-first and avoid per-request counter writes unless you explicitly set `ZIPURL_ACCESS_COUNT_MODE=sync` or `async`.
 
 Negative alias caching uses a bloom filter plus a short TTL cache so repeated bad aliases are rejected with low memory overhead.
+
+Cache warmup is optional and disabled by default. When enabled, the app loads a bounded number of recent active aliases into Caffeine on startup to help multi-instance deployments converge faster after a rollout.
 
 ## Requirements
 
@@ -258,7 +261,7 @@ mvn spring-boot:run
 ```bash
 export ZIPURL_DB_PASSWORD='<database-password>'
 export ZIPURL_VALKEY_PASSWORD='<valkey-password>'
-SPRING_PROFILES_ACTIVE=postgres ZIPURL_DB_MAX_POOL=2 ZIPURL_ACCESS_COUNT_MODE=async mvn spring-boot:run
+SPRING_PROFILES_ACTIVE=postgres ZIPURL_DB_MAX_POOL=2 ZIPURL_ACCESS_COUNT_MODE=disabled mvn spring-boot:run
 ```
 
 The `postgres` profile uses:
@@ -284,15 +287,20 @@ The Docker image defaults to `SPRING_PROFILES_ACTIVE=postgres` so DigitalOcean A
 - `ZIPURL_TOMCAT_MIN_SPARE_THREADS=5`
 - `ZIPURL_TOMCAT_ACCEPT_COUNT=300`
 - `ZIPURL_TOMCAT_MAX_CONNECTIONS=1000`
-- `ZIPURL_CACHE_MAX_SIZE=100000`
+- `ZIPURL_CACHE_MAX_SIZE=200000`
 - `ZIPURL_CACHE_EXPIRE_AFTER_WRITE_SECONDS=3600`
 - `ZIPURL_NEGATIVE_CACHE_MAX_SIZE=50000`
 - `ZIPURL_NEGATIVE_CACHE_TTL_SECONDS=60`
-- `ZIPURL_ACCESS_COUNT_MODE=async`
+- `ZIPURL_VALKEY_ENABLED=true`
+- `ZIPURL_VALKEY_TTL_SECONDS=3600`
+- `ZIPURL_CACHE_WARMUP_ENABLED=false`
+- `ZIPURL_CACHE_WARMUP_LIMIT=50000`
+- `ZIPURL_ACCESS_COUNT_MODE=disabled`
 - `ZIPURL_ACCESS_COUNT_FLUSH_INTERVAL_MS=2000`
 - `ZIPURL_ACCESS_COUNT_BATCH_SIZE=1000`
 - `ZIPURL_ACCESS_COUNT_MAX_PENDING_ALIASES=100000`
-- `ZIPURL_CREATE_MAX_CONCURRENT=10`
+- `ZIPURL_CREATE_MAX_CONCURRENT=5`
+- `ZIPURL_VIRTUAL_THREADS_ENABLED=false`
 
 Valkey shared URL cache uses:
 
@@ -302,6 +310,8 @@ Valkey shared URL cache uses:
 - SSL: enabled
 
 Set `ZIPURL_URL_CACHE_MODE=local` to bypass Valkey and use only in-process Caffeine caching.
+
+For redirect throughput testing, use a separate warmup phase to create aliases and populate caches before the measured run. The warmup phase should not be included in the final latency numbers because it populates Caffeine across all app instances behind the load balancer.
 
 Recommended JVM settings for a 1 GB container:
 
@@ -334,6 +344,20 @@ Managed Postgres has a hard connection cap (DigitalOcean reserves several slots 
 Budget connections as `app_instances * ZIPURL_DB_MAX_POOL` plus admin/headroom and keep it under the database's limit. For a 2-4 instance App Platform deployment, `ZIPURL_DB_MAX_POOL=2` keeps aggregate pressure low and reduces the chance of connection starvation during traffic spikes.
 
 The startup failure `FATAL: remaining connection slots are reserved for roles with the SUPERUSER attribute` means the database is out of slots: reduce `ZIPURL_DB_MAX_POOL` and/or instance count, terminate leftover connections (`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'defaultdb' AND state = 'idle' AND pid <> pg_backend_pid();`), or restart the database.
+
+### Virtual Threads
+
+Virtual threads are off by default. You can enable them with `ZIPURL_VIRTUAL_THREADS_ENABLED=true` for an experiment, but do not treat that as a capacity increase on a 1 vCPU container.
+
+Keep the same small DB pool and create limiter either way:
+
+- `ZIPURL_DB_MAX_POOL=2`
+- `ZIPURL_DB_MIN_IDLE=0`
+- `ZIPURL_CREATE_MAX_CONCURRENT=5`
+
+Virtual threads can reduce platform-thread blocking overhead, but they do not add CPU, do not increase Postgres capacity, and can make it easier to overload downstream systems if cache and DB limits are too loose.
+
+For the experiment, monitor redirect p95/p99 latency, Hikari active/idle/pending, Tomcat busy threads, JVM heap and GC, native memory, and DB connection utilization.
 
 
 ## Test

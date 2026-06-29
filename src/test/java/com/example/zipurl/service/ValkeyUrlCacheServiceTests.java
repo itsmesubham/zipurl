@@ -9,6 +9,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import com.example.zipurl.config.ZipurlProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -31,13 +32,55 @@ class ValkeyUrlCacheServiceTests {
                 .thenThrow(new RedisConnectionFailureException("Valkey unavailable"));
 
         ValkeyUrlCacheService cacheService = new ValkeyUrlCacheService(redisTemplate, zipurlProperties, new ObjectMapper(), new SimpleMeterRegistry());
+        AtomicInteger loaderCalls = new AtomicInteger();
 
         CachedRedirectTarget originalUrl = cacheService.getResolvedUrl(
                 "abc123",
-                alias -> new CachedRedirectTarget("https://example.com/fallback", null)
+                alias -> {
+                    loaderCalls.incrementAndGet();
+                    return new CachedRedirectTarget("https://example.com/fallback", null);
+                }
         );
 
         assertThat(originalUrl.originalUrl()).isEqualTo("https://example.com/fallback");
+        assertThat(loaderCalls.get()).isEqualTo(1);
+    }
+
+    @Test
+    void redisHitPopulatesLocalCacheAndSkipsLoader() {
+        StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
+        ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("zipurl:url:abc123"))
+                .thenReturn("{\"originalUrl\":\"https://example.com/cached\",\"expiresAt\":null}");
+
+        ValkeyUrlCacheService cacheService = new ValkeyUrlCacheService(redisTemplate, zipurlProperties, new ObjectMapper(), new SimpleMeterRegistry());
+        AtomicInteger loaderCalls = new AtomicInteger();
+
+        CachedRedirectTarget originalUrl = cacheService.getResolvedUrl(
+                "abc123",
+                alias -> {
+                    loaderCalls.incrementAndGet();
+                    return new CachedRedirectTarget("https://example.com/fallback", null);
+                }
+        );
+
+        assertThat(originalUrl.originalUrl()).isEqualTo("https://example.com/cached");
+        assertThat(loaderCalls.get()).isZero();
+
+        clearInvocations(redisTemplate, valueOperations);
+
+        CachedRedirectTarget originalUrlFromLocalCache = cacheService.getResolvedUrl(
+                "abc123",
+                alias -> {
+                    loaderCalls.incrementAndGet();
+                    return new CachedRedirectTarget("https://example.com/fallback", null);
+                }
+        );
+
+        assertThat(originalUrlFromLocalCache.originalUrl()).isEqualTo("https://example.com/cached");
+        assertThat(loaderCalls.get()).isZero();
+        org.mockito.Mockito.verifyNoInteractions(redisTemplate, valueOperations);
     }
 
     @Test
@@ -79,19 +122,27 @@ class ValkeyUrlCacheServiceTests {
                 .thenReturn("{\"originalUrl\":\"https://example.com/cached\",\"expiresAt\":null}");
 
         ValkeyUrlCacheService cacheService = new ValkeyUrlCacheService(redisTemplate, zipurlProperties, new ObjectMapper(), new SimpleMeterRegistry());
+        AtomicInteger loaderCalls = new AtomicInteger();
 
         assertThat(cacheService.getResolvedUrl(
                 "abc123",
-                alias -> new CachedRedirectTarget("https://example.com/fallback", null)
+                alias -> {
+                    loaderCalls.incrementAndGet();
+                    return new CachedRedirectTarget("https://example.com/fallback", null);
+                }
         ).originalUrl()).isEqualTo("https://example.com/cached");
 
         clearInvocations(redisTemplate, valueOperations);
 
         assertThat(cacheService.getResolvedUrl(
                 "abc123",
-                alias -> new CachedRedirectTarget("https://example.com/fallback", null)
+                alias -> {
+                    loaderCalls.incrementAndGet();
+                    return new CachedRedirectTarget("https://example.com/fallback", null);
+                }
         ).originalUrl()).isEqualTo("https://example.com/cached");
 
+        assertThat(loaderCalls).hasValue(0);
         org.mockito.Mockito.verifyNoInteractions(redisTemplate, valueOperations);
     }
 }
