@@ -283,10 +283,10 @@ The Docker image defaults to `SPRING_PROFILES_ACTIVE=postgres` so DigitalOcean A
 - `ZIPURL_DB_MAX_LIFETIME=300000`
 - `ZIPURL_DB_KEEPALIVE=120000`
 - `ZIPURL_DB_INIT_FAIL_TIMEOUT=0`
-- `ZIPURL_TOMCAT_MAX_THREADS=50`
+- `ZIPURL_TOMCAT_MAX_THREADS=100`
 - `ZIPURL_TOMCAT_MIN_SPARE_THREADS=5`
 - `ZIPURL_TOMCAT_ACCEPT_COUNT=300`
-- `ZIPURL_TOMCAT_MAX_CONNECTIONS=1000`
+- `ZIPURL_TOMCAT_MAX_CONNECTIONS=2000`
 - `ZIPURL_CACHE_MAX_SIZE=200000`
 - `ZIPURL_CACHE_EXPIRE_AFTER_WRITE_SECONDS=3600`
 - `ZIPURL_NEGATIVE_CACHE_MAX_SIZE=50000`
@@ -300,7 +300,7 @@ The Docker image defaults to `SPRING_PROFILES_ACTIVE=postgres` so DigitalOcean A
 - `ZIPURL_ACCESS_COUNT_BATCH_SIZE=1000`
 - `ZIPURL_ACCESS_COUNT_MAX_PENDING_ALIASES=100000`
 - `ZIPURL_CREATE_MAX_CONCURRENT=5`
-- `ZIPURL_VIRTUAL_THREADS_ENABLED=false`
+- `ZIPURL_VIRTUAL_THREADS_ENABLED=true`
 
 Valkey shared URL cache uses:
 
@@ -347,7 +347,7 @@ The startup failure `FATAL: remaining connection slots are reserved for roles wi
 
 ### Virtual Threads
 
-Virtual threads are off by default. You can enable them with `ZIPURL_VIRTUAL_THREADS_ENABLED=true` for an experiment, but do not treat that as a capacity increase on a 1 vCPU container.
+Virtual threads are enabled by default in this configuration. You can still disable them with `ZIPURL_VIRTUAL_THREADS_ENABLED=false` if load testing shows worse tail latency or memory pressure.
 
 Keep the same small DB pool and create limiter either way:
 

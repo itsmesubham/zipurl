@@ -3,7 +3,7 @@ spring:
     name: zipurl
   threads:
     virtual:
-      enabled: ${ZIPURL_VIRTUAL_THREADS_ENABLED:false}
+      enabled: ${ZIPURL_VIRTUAL_THREADS_ENABLED:true}
   datasource:
     url: jdbc:h2:mem:zipurl
     username: sa
@@ -33,10 +33,10 @@ server:
   port: 8080
   tomcat:
     threads:
-      max: ${ZIPURL_TOMCAT_MAX_THREADS:50}
+      max: ${ZIPURL_TOMCAT_MAX_THREADS:100}
       min-spare: ${ZIPURL_TOMCAT_MIN_SPARE_THREADS:5}
     accept-count: ${ZIPURL_TOMCAT_ACCEPT_COUNT:300}
-    max-connections: ${ZIPURL_TOMCAT_MAX_CONNECTIONS:1000}
+    max-connections: ${ZIPURL_TOMCAT_MAX_CONNECTIONS:2000}
   compression:
     enabled: false
 
@@ -91,7 +91,7 @@ spring:
       on-profile: postgres
   threads:
     virtual:
-      enabled: ${ZIPURL_VIRTUAL_THREADS_ENABLED:false}
+      enabled: ${ZIPURL_VIRTUAL_THREADS_ENABLED:true}
   datasource:
     url: jdbc:postgresql://${ZIPURL_DB_HOST:zipurl-do-user-39324437-0.a.db.ondigitalocean.com}:${ZIPURL_DB_PORT:25060}/${ZIPURL_DB_NAME:defaultdb}?sslmode=${ZIPURL_DB_SSLMODE:require}
     username: ${ZIPURL_DB_USERNAME:doadmin}
