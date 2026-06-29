@@ -35,7 +35,7 @@ public class ZipurlProperties {
 
     private Duration sharedCacheTtl = Duration.ofHours(6);
 
-    private AccessCountMode accessCountMode = AccessCountMode.ASYNC;
+    private AccessCountMode accessCountMode = AccessCountMode.DISABLED;
 
     @Min(1)
     private long accessCountFlushIntervalMs = 1_000;

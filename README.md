@@ -234,10 +234,10 @@ Low-level details:
 ## Access Count Modes
 
 - `sync`: direct Postgres increment on every redirect, useful when you want the simplest correctness-first behavior.
-- `async`: production default. Redirects increment an in-memory `LongAdder`, then a scheduled flusher batches deltas by alias and writes them to Postgres.
+- `async`: redirects increment an in-memory `LongAdder`, then a scheduled flusher batches deltas by alias and writes them to Postgres.
 - `disabled`: skips counting entirely for extreme-load tests or temporary hot-path validation.
 
-Recommendation: keep `disabled` in production for now if you want the write-free redirect hot path. Enable `async` only after verifying the async flusher and Postgres headroom on your deployment.
+Default behavior is `disabled`, so redirects stay write-free unless you explicitly set `ZIPURL_ACCESS_COUNT_MODE=async` or `sync`.
 
 ## Requirements
 

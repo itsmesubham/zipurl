@@ -51,7 +51,7 @@ zipurl:
   cache-max-size: ${ZIPURL_CACHE_MAX_SIZE:100000}
   cache-expire-after-write-seconds: ${ZIPURL_CACHE_EXPIRE_AFTER_WRITE_SECONDS:3600}
   shared-cache-ttl: 6h
-  access-count-mode: ${ZIPURL_ACCESS_COUNT_MODE:async}
+  access-count-mode: ${ZIPURL_ACCESS_COUNT_MODE:disabled}
   access-count-flush-interval-ms: ${ZIPURL_ACCESS_COUNT_FLUSH_INTERVAL_MS:1000}
   access-count-max-pending-aliases: ${ZIPURL_ACCESS_COUNT_MAX_PENDING_ALIASES:100000}
   access-count-batch-size: ${ZIPURL_ACCESS_COUNT_BATCH_SIZE:1000}
