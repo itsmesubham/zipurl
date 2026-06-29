@@ -10,8 +10,6 @@ spring:
     hibernate:
       ddl-auto: update
     open-in-view: false
-  flyway:
-    enabled: false
   data:
     redis:
       repositories:
@@ -62,7 +60,7 @@ spring:
     password: ${ZIPURL_DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
     hikari:
-      # Keep each instance's connection footprint small so app replicas and Flyway stay
+      # Keep each instance's connection footprint small so app replicas stay
       # within the managed Postgres connection cap. The default is 1 because this
       # managed database tier reserves its remaining slots for superuser/maintenance.
       maximum-pool-size: ${ZIPURL_DB_MAX_POOL:1}
@@ -83,12 +81,8 @@ spring:
         enabled: true
   jpa:
     hibernate:
-      ddl-auto: validate
+      ddl-auto: update
     database-platform: org.hibernate.dialect.PostgreSQLDialect
-  flyway:
-    enabled: true
-    baseline-on-migrate: true
-    baseline-version: 1
   h2:
     console:
       enabled: false

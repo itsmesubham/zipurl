@@ -279,14 +279,11 @@ Valkey shared URL cache uses:
 
 Set `ZIPURL_URL_CACHE_MODE=local` to bypass Valkey and use only in-process Caffeine caching.
 
-### Schema Migrations
+### Schema Updates
 
-The `postgres` profile keeps Hibernate on `ddl-auto: validate` (it never alters the production schema) and manages schema changes with Flyway migrations in `src/main/resources/db/migration`:
+The `postgres` profile keeps Hibernate on `ddl-auto: update` so the schema follows the entity model automatically at startup. The H2/local profile also uses `ddl-auto: update`.
 
-- `V1__create_short_urls.sql` — the original table; on an already-provisioned database Flyway baselines it (`baseline-on-migrate: true`, `baseline-version: 1`) and skips this script.
-- `V2__add_expires_at.sql` — adds the `expires_at` column for the TTL feature.
-
-Flyway runs before Hibernate validation on startup, so deploying a build that adds an entity column will migrate the live schema automatically (no manual `ALTER TABLE` and no `ddl-auto=update` in production). The H2/local profile has Flyway disabled and continues to use `ddl-auto: update`.
+The SQL files in `src/main/resources/db/migration` are no longer applied by the application during startup.
 
 ### Connection Pool Sizing
 
@@ -302,7 +299,7 @@ Managed Postgres has a hard connection cap (DigitalOcean reserves several slots 
 | `keepalive-time` | `ZIPURL_DB_KEEPALIVE` | `120000` ms |
 | `initialization-fail-timeout` | `ZIPURL_DB_INIT_FAIL_TIMEOUT` | `0` ms |
 
-Budget connections as `app_instances * ZIPURL_DB_MAX_POOL + migration/headroom` and keep it under the database's limit. For small managed Postgres plans:
+Budget connections as `app_instances * ZIPURL_DB_MAX_POOL` and keep it under the database's limit. For small managed Postgres plans:
 
 - 1 instance: set `ZIPURL_DB_MAX_POOL=1`
 - 2 instances: use DigitalOcean PgBouncer or the connection-pool endpoint instead of direct database connections
