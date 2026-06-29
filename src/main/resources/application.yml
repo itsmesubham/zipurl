@@ -63,7 +63,7 @@ zipurl:
     max-size: ${ZIPURL_CACHE_MAX_SIZE:200000}
     expire-after-write-seconds: ${ZIPURL_CACHE_EXPIRE_AFTER_WRITE_SECONDS:3600}
     warmup:
-      enabled: ${ZIPURL_CACHE_WARMUP_ENABLED:false}
+      enabled: ${ZIPURL_CACHE_WARMUP_ENABLED:true}
       limit: ${ZIPURL_CACHE_WARMUP_LIMIT:50000}
   negative-cache:
     max-size: ${ZIPURL_NEGATIVE_CACHE_MAX_SIZE:50000}
@@ -131,7 +131,7 @@ zipurl:
     max-size: ${ZIPURL_CACHE_MAX_SIZE:200000}
     expire-after-write-seconds: ${ZIPURL_CACHE_EXPIRE_AFTER_WRITE_SECONDS:3600}
     warmup:
-      enabled: ${ZIPURL_CACHE_WARMUP_ENABLED:false}
+      enabled: ${ZIPURL_CACHE_WARMUP_ENABLED:true}
       limit: ${ZIPURL_CACHE_WARMUP_LIMIT:50000}
   negative-cache:
     max-size: ${ZIPURL_NEGATIVE_CACHE_MAX_SIZE:50000}
