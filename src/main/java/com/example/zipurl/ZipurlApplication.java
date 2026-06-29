@@ -28,10 +28,11 @@ public class ZipurlApplication {
             ZipurlProperties zipurlProperties
     ) {
         return args -> log.info(
-                "Startup config: tomcatMaxThreads={}, accessCountMode={}, cacheMaxSize={}",
+                "Startup config: tomcatMaxThreads={}, accessCountMode={}, cacheMaxSize={}, createMaxConcurrent={}",
                 tomcatMaxThreads,
                 zipurlProperties.getAccessCountMode(),
-                zipurlProperties.getCacheMaxSize()
+                zipurlProperties.getCacheMaxSize(),
+                zipurlProperties.getCreateMaxConcurrent()
         );
     }
 }

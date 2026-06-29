@@ -4,9 +4,9 @@ import java.util.function.Function;
 
 public interface UrlCacheService {
 
-    CachedResolvedUrl getResolvedUrl(String alias, Function<String, CachedResolvedUrl> loader);
+    CachedRedirectTarget getResolvedUrl(String alias, Function<String, CachedRedirectTarget> loader);
 
-    void putResolvedUrl(String alias, CachedResolvedUrl resolvedUrl);
+    void putResolvedUrl(String alias, CachedRedirectTarget resolvedUrl);
 
     void invalidate(String alias);
 }

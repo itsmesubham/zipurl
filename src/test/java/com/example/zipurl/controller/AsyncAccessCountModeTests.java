@@ -10,7 +10,7 @@ import java.time.Instant;
 import com.example.zipurl.model.ShortUrl;
 import com.example.zipurl.repository.ShortUrlRepository;
 import com.example.zipurl.service.AsyncDatabaseAccessCountService;
-import com.example.zipurl.service.CachedResolvedUrl;
+import com.example.zipurl.service.CachedRedirectTarget;
 import com.example.zipurl.service.UrlCacheService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -66,7 +66,7 @@ class AsyncAccessCountModeTests {
         shortUrlRepository.saveAndFlush(new ShortUrl("async-expired", "https://example.com/expired"));
         urlCacheService.putResolvedUrl(
                 "async-expired",
-                new CachedResolvedUrl("https://example.com/expired", Instant.now().minusSeconds(1))
+                new CachedRedirectTarget("https://example.com/expired", Instant.now().minusSeconds(1))
         );
 
         mockMvc.perform(get("/async-expired"))

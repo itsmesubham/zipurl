@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.data.redis.RedisConnectionFailureException;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 class ValkeyUrlCacheServiceTests {
 
@@ -29,11 +30,11 @@ class ValkeyUrlCacheServiceTests {
         when(valueOperations.get("zipurl:url:abc123"))
                 .thenThrow(new RedisConnectionFailureException("Valkey unavailable"));
 
-        ValkeyUrlCacheService cacheService = new ValkeyUrlCacheService(redisTemplate, zipurlProperties, new ObjectMapper());
+        ValkeyUrlCacheService cacheService = new ValkeyUrlCacheService(redisTemplate, zipurlProperties, new ObjectMapper(), new SimpleMeterRegistry());
 
-        CachedResolvedUrl originalUrl = cacheService.getResolvedUrl(
+        CachedRedirectTarget originalUrl = cacheService.getResolvedUrl(
                 "abc123",
-                alias -> new CachedResolvedUrl("https://example.com/fallback", null)
+                alias -> new CachedRedirectTarget("https://example.com/fallback", null)
         );
 
         assertThat(originalUrl.originalUrl()).isEqualTo("https://example.com/fallback");
@@ -48,11 +49,11 @@ class ValkeyUrlCacheServiceTests {
                 .when(valueOperations)
                 .set(eq("zipurl:url:abc123"), any(String.class), any(Duration.class));
 
-        ValkeyUrlCacheService cacheService = new ValkeyUrlCacheService(redisTemplate, zipurlProperties, new ObjectMapper());
+        ValkeyUrlCacheService cacheService = new ValkeyUrlCacheService(redisTemplate, zipurlProperties, new ObjectMapper(), new SimpleMeterRegistry());
 
         assertThatCode(() -> cacheService.putResolvedUrl(
                 "abc123",
-                new CachedResolvedUrl("https://example.com", null)
+                new CachedRedirectTarget("https://example.com", null)
         ))
                 .doesNotThrowAnyException();
     }
@@ -63,7 +64,7 @@ class ValkeyUrlCacheServiceTests {
         when(redisTemplate.delete("zipurl:url:abc123"))
                 .thenThrow(new RedisConnectionFailureException("Valkey unavailable"));
 
-        ValkeyUrlCacheService cacheService = new ValkeyUrlCacheService(redisTemplate, zipurlProperties, new ObjectMapper());
+        ValkeyUrlCacheService cacheService = new ValkeyUrlCacheService(redisTemplate, zipurlProperties, new ObjectMapper(), new SimpleMeterRegistry());
 
         assertThatCode(() -> cacheService.invalidate("abc123"))
                 .doesNotThrowAnyException();
@@ -77,18 +78,18 @@ class ValkeyUrlCacheServiceTests {
         when(valueOperations.get("zipurl:url:abc123"))
                 .thenReturn("{\"originalUrl\":\"https://example.com/cached\",\"expiresAt\":null}");
 
-        ValkeyUrlCacheService cacheService = new ValkeyUrlCacheService(redisTemplate, zipurlProperties, new ObjectMapper());
+        ValkeyUrlCacheService cacheService = new ValkeyUrlCacheService(redisTemplate, zipurlProperties, new ObjectMapper(), new SimpleMeterRegistry());
 
         assertThat(cacheService.getResolvedUrl(
                 "abc123",
-                alias -> new CachedResolvedUrl("https://example.com/fallback", null)
+                alias -> new CachedRedirectTarget("https://example.com/fallback", null)
         ).originalUrl()).isEqualTo("https://example.com/cached");
 
         clearInvocations(redisTemplate, valueOperations);
 
         assertThat(cacheService.getResolvedUrl(
                 "abc123",
-                alias -> new CachedResolvedUrl("https://example.com/fallback", null)
+                alias -> new CachedRedirectTarget("https://example.com/fallback", null)
         ).originalUrl()).isEqualTo("https://example.com/cached");
 
         org.mockito.Mockito.verifyNoInteractions(redisTemplate, valueOperations);

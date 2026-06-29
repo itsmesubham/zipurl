@@ -15,6 +15,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
+import com.example.zipurl.config.ZipurlProperties;
 import com.example.zipurl.dto.CreateShortUrlRequest;
 import com.example.zipurl.exception.AliasAlreadyExistsException;
 import com.example.zipurl.exception.ShortUrlNotFoundException;
@@ -27,6 +28,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
 
 @SpringBootTest(properties = {
         "zipurl.access-count.mode=sync"
@@ -44,6 +47,12 @@ class UrlShorteningServiceTests {
 
     @Autowired
     private TestAliasGenerator aliasGenerator;
+
+    @Autowired
+    private PlatformTransactionManager transactionManager;
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @BeforeEach
     void setUp() {
@@ -178,13 +187,37 @@ class UrlShorteningServiceTests {
                 new ShortUrl("cached1", "https://example.com/cached", Instant.now().minusSeconds(60))
         );
         // Simulate an entry that was cached while still valid, then expired.
-        urlCacheService.putResolvedUrl("cached1", new com.example.zipurl.service.CachedResolvedUrl(
+        urlCacheService.putResolvedUrl("cached1", new com.example.zipurl.service.CachedRedirectTarget(
                 "https://example.com/cached",
                 Instant.now().plusSeconds(60)
         ));
 
         assertThatThrownBy(() -> urlShorteningService.resolveOriginalUrl("cached1"))
                 .isInstanceOf(ShortUrlNotFoundException.class);
+    }
+
+    @Test
+    void createConcurrencyLimiterStillAllowsSuccessfulCreate() {
+        ZipurlProperties zipurlProperties = new ZipurlProperties();
+        zipurlProperties.setCreateMaxConcurrent(1);
+        UrlShorteningService limitedService = new UrlShorteningService(
+                aliasGenerator,
+                org.mockito.Mockito.mock(com.example.zipurl.service.AccessCountService.class),
+                jdbcTemplate,
+                shortUrlRepository,
+                transactionManager,
+                urlCacheService,
+                zipurlProperties,
+                new io.micrometer.core.instrument.simple.SimpleMeterRegistry()
+        );
+
+        aliasGenerator.useAliases("limit01");
+
+        ShortUrl shortUrl = limitedService.createShortUrl(
+                new CreateShortUrlRequest("https://example.com/limit", null, null)
+        );
+
+        assertThat(shortUrl.getAlias()).isEqualTo("limit01");
     }
 
     private Object getResult(Future<Object> future) {

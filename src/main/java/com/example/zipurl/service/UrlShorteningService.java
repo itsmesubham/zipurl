@@ -1,7 +1,10 @@
 package com.example.zipurl.service;
 
 import java.time.Instant;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.Locale;
+import java.util.concurrent.Semaphore;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -12,10 +15,18 @@ import com.example.zipurl.exception.AliasGenerationException;
 import com.example.zipurl.exception.ShortUrlNotFoundException;
 import com.example.zipurl.model.ShortUrl;
 import com.example.zipurl.repository.ShortUrlRepository;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -28,63 +39,128 @@ public class UrlShorteningService {
 
     private final AliasGenerator aliasGenerator;
     private final AccessCountService accessCountService;
+    private final JdbcTemplate jdbcTemplate;
     private final ShortUrlRepository shortUrlRepository;
     private final TransactionTemplate transactionTemplate;
     private final UrlCacheService urlCacheService;
+    private final MeterRegistry meterRegistry;
+    private final Semaphore createSemaphore;
+    private final Cache<String, Boolean> negativeCache;
+    private final NegativeAliasBloomFilter negativeAliasBloomFilter;
     private final int generatedAliasLength;
     private final int maxGeneratedAliasAttempts;
     private final Set<String> reservedAliases;
+    private final Counter redirectCounter;
+    private final Timer redirectTimer;
+    private final Counter createRejectedCounter;
+    private final Counter negativeCacheHitCounter;
+    private final Counter negativeCacheMissCounter;
 
     public UrlShorteningService(
             AliasGenerator aliasGenerator,
             AccessCountService accessCountService,
+            JdbcTemplate jdbcTemplate,
             ShortUrlRepository shortUrlRepository,
             PlatformTransactionManager transactionManager,
             UrlCacheService urlCacheService,
-            ZipurlProperties zipurlProperties
+            ZipurlProperties zipurlProperties,
+            MeterRegistry meterRegistry
     ) {
         this.aliasGenerator = aliasGenerator;
         this.accessCountService = accessCountService;
+        this.jdbcTemplate = jdbcTemplate;
         this.shortUrlRepository = shortUrlRepository;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.urlCacheService = urlCacheService;
+        this.meterRegistry = meterRegistry;
+        this.createSemaphore = new Semaphore(zipurlProperties.getCreateMaxConcurrent());
+        this.negativeCache = Caffeine.newBuilder()
+                .maximumSize(zipurlProperties.getNegativeCacheMaxSize())
+                .expireAfterWrite(java.time.Duration.ofSeconds(zipurlProperties.getNegativeCacheTtlSeconds()))
+                .build();
+        this.negativeAliasBloomFilter = new NegativeAliasBloomFilter(zipurlProperties.getNegativeCacheMaxSize());
         this.generatedAliasLength = zipurlProperties.getGeneratedAliasLength();
         this.maxGeneratedAliasAttempts = zipurlProperties.getMaxGeneratedAliasAttempts();
         this.reservedAliases = zipurlProperties.getReservedAliases().stream()
                 .map(alias -> alias.toLowerCase(Locale.ROOT))
                 .collect(Collectors.toUnmodifiableSet());
+        this.redirectCounter = Counter.builder("zipurl.redirect.count")
+                .description("Successful redirect responses")
+                .register(meterRegistry);
+        this.redirectTimer = Timer.builder("zipurl.redirect.latency")
+                .description("Redirect resolution latency")
+                .register(meterRegistry);
+        this.createRejectedCounter = Counter.builder("zipurl.create.rejected")
+                .description("Rejected create requests due to concurrency limit")
+                .register(meterRegistry);
+        this.negativeCacheHitCounter = Counter.builder("zipurl.cache.negative.hit")
+                .description("Negative cache hits for missing aliases")
+                .register(meterRegistry);
+        this.negativeCacheMissCounter = Counter.builder("zipurl.cache.negative.miss")
+                .description("Negative cache misses for missing aliases")
+                .register(meterRegistry);
     }
 
     public ShortUrl createShortUrl(CreateShortUrlRequest request) {
-        String originalUrl = request.longUrl().trim();
-        String customAlias = normalizeCustomAlias(request.customAlias());
-        Instant expiresAt = resolveExpiresAt(request.ttlSeconds());
-
-        if (StringUtils.hasText(customAlias)) {
-            return createWithCustomAlias(customAlias, originalUrl, expiresAt);
+        if (!createSemaphore.tryAcquire()) {
+            createRejectedCounter.increment();
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "Create capacity exhausted");
         }
 
-        return createWithGeneratedAlias(originalUrl, expiresAt);
+        try {
+            String originalUrl = request.longUrl().trim();
+            String customAlias = normalizeCustomAlias(request.customAlias());
+            Instant expiresAt = resolveExpiresAt(request.ttlSeconds());
+
+            if (StringUtils.hasText(customAlias)) {
+                return createWithCustomAlias(customAlias, originalUrl, expiresAt);
+            }
+
+            return createWithGeneratedAlias(originalUrl, expiresAt);
+        } finally {
+            createSemaphore.release();
+        }
     }
 
     public String resolveOriginalUrl(String alias) {
-        CachedResolvedUrl resolvedUrl = urlCacheService.getResolvedUrl(alias, this::loadResolvedUrl);
-        if (resolvedUrl.isExpired(Instant.now())) {
-            urlCacheService.invalidate(alias);
-            throw new ShortUrlNotFoundException(alias);
-        }
+        Timer.Sample sample = Timer.start(meterRegistry);
         try {
-            accessCountService.recordAccess(alias);
-        } catch (ShortUrlNotFoundException exception) {
-            // Row is gone or expired while still cached: drop the stale entry and surface a 404.
-            urlCacheService.invalidate(alias);
-            throw exception;
-        } catch (DataAccessException exception) {
-            // The link is valid and cached; a transient counter-write failure must not break redirects.
-            log.warn("Failed to record access for alias '{}': {}", alias, exception.getMessage());
-        }
+            if (isNegativeAlias(alias)) {
+                negativeCacheHitCounter.increment();
+                throw new ShortUrlNotFoundException(alias);
+            }
+            negativeCacheMissCounter.increment();
 
-        return resolvedUrl.originalUrl();
+            CachedRedirectTarget resolvedUrl;
+            try {
+                resolvedUrl = urlCacheService.getResolvedUrl(alias, this::loadRedirectTarget);
+            } catch (ShortUrlNotFoundException exception) {
+                recordNegativeAlias(alias);
+                throw exception;
+            }
+            Instant now = Instant.now();
+            if (resolvedUrl.isExpired(now)) {
+                urlCacheService.invalidate(alias);
+                recordNegativeAlias(alias);
+                throw new ShortUrlNotFoundException(alias);
+            }
+            try {
+                accessCountService.recordAccess(alias);
+            } catch (ShortUrlNotFoundException exception) {
+                // Row is gone or expired while still cached: drop the stale entry and surface a 404.
+                urlCacheService.invalidate(alias);
+                recordNegativeAlias(alias);
+                throw exception;
+            } catch (DataAccessException exception) {
+                // The link is valid and cached; a transient counter-write failure must not break redirects.
+                log.warn("Failed to record access for alias '{}': {}", alias, exception.getMessage());
+            }
+
+            redirectCounter.increment();
+            return resolvedUrl.originalUrl();
+        } finally {
+            sample.stop(redirectTimer);
+        }
     }
 
     public ShortUrl getShortUrl(String alias) {
@@ -109,7 +185,8 @@ public class UrlShorteningService {
 
                 return shortUrlRepository.saveAndFlush(new ShortUrl(alias, originalUrl, expiresAt));
             });
-            urlCacheService.putResolvedUrl(shortUrl.getAlias(), new CachedResolvedUrl(shortUrl.getOriginalUrl(), shortUrl.getExpiresAt()));
+            urlCacheService.putResolvedUrl(shortUrl.getAlias(), new CachedRedirectTarget(shortUrl.getOriginalUrl(), shortUrl.getExpiresAt()));
+            negativeCache.invalidate(shortUrl.getAlias());
             return shortUrl;
         } catch (DataIntegrityViolationException exception) {
             throw new AliasAlreadyExistsException(alias, exception);
@@ -128,7 +205,8 @@ public class UrlShorteningService {
                 ShortUrl shortUrl = transactionTemplate.execute(status ->
                         shortUrlRepository.saveAndFlush(new ShortUrl(alias, originalUrl, expiresAt))
                 );
-                urlCacheService.putResolvedUrl(shortUrl.getAlias(), new CachedResolvedUrl(shortUrl.getOriginalUrl(), shortUrl.getExpiresAt()));
+                urlCacheService.putResolvedUrl(shortUrl.getAlias(), new CachedRedirectTarget(shortUrl.getOriginalUrl(), shortUrl.getExpiresAt()));
+                negativeCache.invalidate(shortUrl.getAlias());
                 return shortUrl;
             } catch (DataIntegrityViolationException exception) {
                 // A concurrent request may have claimed the alias first; try a fresh transaction.
@@ -158,13 +236,46 @@ public class UrlShorteningService {
         return reservedAliases.contains(alias.toLowerCase(Locale.ROOT));
     }
 
-    private CachedResolvedUrl loadResolvedUrl(String alias) {
-        ShortUrl shortUrl = shortUrlRepository.findByAlias(alias)
+    private CachedRedirectTarget loadRedirectTarget(String alias) {
+        CachedRedirectTarget redirectTarget = jdbcTemplate.query(
+                        """
+                                SELECT original_url, expires_at
+                                FROM short_urls
+                                WHERE alias = ?
+                                """,
+                        this::mapRedirectTarget,
+                        alias
+                )
+                .stream()
+                .findFirst()
                 .orElseThrow(() -> new ShortUrlNotFoundException(alias));
-        if (shortUrl.isExpired(Instant.now())) {
+
+        Instant now = Instant.now();
+        if (redirectTarget.isExpired(now)) {
+            recordNegativeAlias(alias);
             throw new ShortUrlNotFoundException(alias);
         }
-        return new CachedResolvedUrl(shortUrl.getOriginalUrl(), shortUrl.getExpiresAt());
+        return redirectTarget;
+    }
+
+    private CachedRedirectTarget mapRedirectTarget(ResultSet resultSet, int rowNum) throws SQLException {
+        return new CachedRedirectTarget(
+                resultSet.getString("original_url"),
+                resultSet.getTimestamp("expires_at") == null ? null : resultSet.getTimestamp("expires_at").toInstant()
+        );
+    }
+
+    private boolean isNegativeAlias(String alias) {
+        if (!negativeAliasBloomFilter.mightContain(alias)) {
+            return false;
+        }
+
+        return negativeCache.getIfPresent(alias) != null;
+    }
+
+    private void recordNegativeAlias(String alias) {
+        negativeAliasBloomFilter.put(alias);
+        negativeCache.put(alias, Boolean.TRUE);
     }
 
 }

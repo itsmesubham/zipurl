@@ -35,16 +35,25 @@ public class ZipurlProperties {
 
     private Duration sharedCacheTtl = Duration.ofHours(6);
 
+    @Min(1)
+    private long negativeCacheMaxSize = 50_000;
+
+    @Min(1)
+    private long negativeCacheTtlSeconds = 60;
+
     private AccessCountMode accessCountMode = AccessCountMode.DISABLED;
 
     @Min(1)
-    private long accessCountFlushIntervalMs = 1_000;
+    private long accessCountFlushIntervalMs = 2_000;
 
     @Min(1)
     private long accessCountMaxPendingAliases = 100_000;
 
     @Min(1)
     private long accessCountBatchSize = 1_000;
+
+    @Min(1)
+    private int createMaxConcurrent = 10;
 
     public int getGeneratedAliasLength() {
         return generatedAliasLength;
@@ -94,6 +103,22 @@ public class ZipurlProperties {
         this.sharedCacheTtl = sharedCacheTtl;
     }
 
+    public long getNegativeCacheMaxSize() {
+        return negativeCacheMaxSize;
+    }
+
+    public void setNegativeCacheMaxSize(long negativeCacheMaxSize) {
+        this.negativeCacheMaxSize = negativeCacheMaxSize;
+    }
+
+    public long getNegativeCacheTtlSeconds() {
+        return negativeCacheTtlSeconds;
+    }
+
+    public void setNegativeCacheTtlSeconds(long negativeCacheTtlSeconds) {
+        this.negativeCacheTtlSeconds = negativeCacheTtlSeconds;
+    }
+
     public AccessCountMode getAccessCountMode() {
         return accessCountMode;
     }
@@ -124,5 +149,13 @@ public class ZipurlProperties {
 
     public void setAccessCountBatchSize(long accessCountBatchSize) {
         this.accessCountBatchSize = accessCountBatchSize;
+    }
+
+    public int getCreateMaxConcurrent() {
+        return createMaxConcurrent;
+    }
+
+    public void setCreateMaxConcurrent(int createMaxConcurrent) {
+        this.createMaxConcurrent = createMaxConcurrent;
     }
 }

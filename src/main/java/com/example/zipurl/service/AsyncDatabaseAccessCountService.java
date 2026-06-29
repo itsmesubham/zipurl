@@ -19,6 +19,7 @@ import com.example.zipurl.config.ZipurlProperties;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -48,12 +49,14 @@ public class AsyncDatabaseAccessCountService implements AccessCountService {
 
     private final NamedParameterJdbcTemplate jdbcTemplate;
     private final ZipurlProperties zipurlProperties;
+    private final MeterRegistry meterRegistry;
     private final ConcurrentHashMap<String, LongAdder> pendingCounts = new ConcurrentHashMap<>();
     private final AtomicBoolean flushInProgress = new AtomicBoolean(false);
     private final AtomicLong droppedCounts = new AtomicLong();
     private final Counter flushSuccessCounter;
     private final Counter flushFailureCounter;
     private final Counter droppedCountCounter;
+    private final Timer flushTimer;
     private final ExecutorService shutdownExecutor = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "zipurl-access-count-shutdown");
         thread.setDaemon(true);
@@ -61,12 +64,13 @@ public class AsyncDatabaseAccessCountService implements AccessCountService {
     });
 
     public AsyncDatabaseAccessCountService(
-            NamedParameterJdbcTemplate jdbcTemplate,
-            ZipurlProperties zipurlProperties,
-            MeterRegistry meterRegistry
+        NamedParameterJdbcTemplate jdbcTemplate,
+        ZipurlProperties zipurlProperties,
+        MeterRegistry meterRegistry
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.zipurlProperties = zipurlProperties;
+        this.meterRegistry = meterRegistry;
         this.flushSuccessCounter = Counter.builder("zipurl.access.count.flush.success")
                 .description("Number of successfully flushed access-count batches")
                 .register(meterRegistry);
@@ -75,6 +79,9 @@ public class AsyncDatabaseAccessCountService implements AccessCountService {
                 .register(meterRegistry);
         this.droppedCountCounter = Counter.builder("zipurl.access.count.dropped")
                 .description("Number of dropped access-count events")
+                .register(meterRegistry);
+        this.flushTimer = Timer.builder("zipurl.access.count.flush.duration")
+                .description("Duration of access-count flushes")
                 .register(meterRegistry);
         Gauge.builder("zipurl.access.count.pending.aliases", pendingCounts, ConcurrentHashMap::size)
                 .description("Pending aliases waiting to be flushed")
@@ -107,7 +114,7 @@ public class AsyncDatabaseAccessCountService implements AccessCountService {
         existingCounter.increment();
     }
 
-    @Scheduled(fixedDelayString = "${zipurl.access-count.flush-interval-ms:1000}")
+    @Scheduled(fixedDelayString = "${zipurl.access-count.flush-interval-ms:2000}")
     public void scheduledFlush() {
         flushPendingCounts(true);
     }
@@ -131,17 +138,22 @@ public class AsyncDatabaseAccessCountService implements AccessCountService {
     }
 
     private int flushPendingCounts(boolean shutdownFlush) {
+        Timer.Sample sample = Timer.start(meterRegistry);
         if (!flushInProgress.compareAndSet(false, true)) {
+            sample.stop(flushTimer);
             return 0;
         }
 
         try {
             Map<String, Long> drainedCounts = drainPendingCounts();
             if (drainedCounts.isEmpty()) {
+                sample.stop(flushTimer);
                 return 0;
             }
 
-            return persistCounts(drainedCounts, shutdownFlush);
+            int flushed = persistCounts(drainedCounts, shutdownFlush);
+            sample.stop(flushTimer);
+            return flushed;
         } finally {
             flushInProgress.set(false);
         }

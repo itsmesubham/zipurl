@@ -6,6 +6,14 @@ spring:
     username: sa
     password:
     driver-class-name: org.h2.Driver
+    hikari:
+      maximum-pool-size: ${ZIPURL_DB_MAX_POOL:2}
+      minimum-idle: ${ZIPURL_DB_MIN_IDLE:0}
+      connection-timeout: ${ZIPURL_DB_CONNECTION_TIMEOUT:10000}
+      idle-timeout: ${ZIPURL_DB_IDLE_TIMEOUT:30000}
+      max-lifetime: ${ZIPURL_DB_MAX_LIFETIME:300000}
+      keepalive-time: ${ZIPURL_DB_KEEPALIVE:120000}
+      pool-name: ZipUrlHikariPool
   jpa:
     hibernate:
       ddl-auto: update
@@ -22,10 +30,10 @@ server:
   port: 8080
   tomcat:
     threads:
-      max: ${ZIPURL_TOMCAT_MAX_THREADS:120}
-      min-spare: ${ZIPURL_TOMCAT_MIN_SPARE_THREADS:20}
-    accept-count: ${ZIPURL_TOMCAT_ACCEPT_COUNT:500}
-    max-connections: ${ZIPURL_TOMCAT_MAX_CONNECTIONS:1500}
+      max: ${ZIPURL_TOMCAT_MAX_THREADS:50}
+      min-spare: ${ZIPURL_TOMCAT_MIN_SPARE_THREADS:5}
+    accept-count: ${ZIPURL_TOMCAT_ACCEPT_COUNT:300}
+    max-connections: ${ZIPURL_TOMCAT_MAX_CONNECTIONS:1000}
   compression:
     enabled: false
 
@@ -48,13 +56,20 @@ management:
 zipurl:
   generated-alias-length: 8
   max-generated-alias-attempts: 10
-  cache-max-size: ${ZIPURL_CACHE_MAX_SIZE:100000}
-  cache-expire-after-write-seconds: ${ZIPURL_CACHE_EXPIRE_AFTER_WRITE_SECONDS:3600}
+  cache:
+    max-size: ${ZIPURL_CACHE_MAX_SIZE:100000}
+    expire-after-write-seconds: ${ZIPURL_CACHE_EXPIRE_AFTER_WRITE_SECONDS:3600}
+  negative-cache:
+    max-size: ${ZIPURL_NEGATIVE_CACHE_MAX_SIZE:50000}
+    ttl-seconds: ${ZIPURL_NEGATIVE_CACHE_TTL_SECONDS:60}
   shared-cache-ttl: 6h
-  access-count-mode: ${ZIPURL_ACCESS_COUNT_MODE:disabled}
-  access-count-flush-interval-ms: ${ZIPURL_ACCESS_COUNT_FLUSH_INTERVAL_MS:1000}
-  access-count-max-pending-aliases: ${ZIPURL_ACCESS_COUNT_MAX_PENDING_ALIASES:100000}
-  access-count-batch-size: ${ZIPURL_ACCESS_COUNT_BATCH_SIZE:1000}
+  access-count:
+    mode: ${ZIPURL_ACCESS_COUNT_MODE:disabled}
+    flush-interval-ms: ${ZIPURL_ACCESS_COUNT_FLUSH_INTERVAL_MS:2000}
+    batch-size: ${ZIPURL_ACCESS_COUNT_BATCH_SIZE:1000}
+    max-pending-aliases: ${ZIPURL_ACCESS_COUNT_MAX_PENDING_ALIASES:100000}
+  create:
+    max-concurrent: ${ZIPURL_CREATE_MAX_CONCURRENT:10}
   url-cache:
     mode: local
   reserved-aliases:
@@ -72,7 +87,7 @@ spring:
     password: ${ZIPURL_DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
     hikari:
-      maximum-pool-size: ${ZIPURL_DB_MAX_POOL:10}
+      maximum-pool-size: ${ZIPURL_DB_MAX_POOL:2}
       minimum-idle: ${ZIPURL_DB_MIN_IDLE:0}
       connection-timeout: ${ZIPURL_DB_CONNECTION_TIMEOUT:10000}
       idle-timeout: ${ZIPURL_DB_IDLE_TIMEOUT:30000}
@@ -101,4 +116,16 @@ spring:
 zipurl:
   url-cache:
     mode: ${ZIPURL_URL_CACHE_MODE:valkey}
-  access-count-mode: ${ZIPURL_ACCESS_COUNT_MODE:disabled}
+  cache:
+    max-size: ${ZIPURL_CACHE_MAX_SIZE:100000}
+    expire-after-write-seconds: ${ZIPURL_CACHE_EXPIRE_AFTER_WRITE_SECONDS:3600}
+  negative-cache:
+    max-size: ${ZIPURL_NEGATIVE_CACHE_MAX_SIZE:50000}
+    ttl-seconds: ${ZIPURL_NEGATIVE_CACHE_TTL_SECONDS:60}
+  access-count:
+    mode: ${ZIPURL_ACCESS_COUNT_MODE:disabled}
+    flush-interval-ms: ${ZIPURL_ACCESS_COUNT_FLUSH_INTERVAL_MS:2000}
+    batch-size: ${ZIPURL_ACCESS_COUNT_BATCH_SIZE:1000}
+    max-pending-aliases: ${ZIPURL_ACCESS_COUNT_MAX_PENDING_ALIASES:100000}
+  create:
+    max-concurrent: ${ZIPURL_CREATE_MAX_CONCURRENT:10}
