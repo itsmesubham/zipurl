@@ -1,4 +1,5 @@
 target/
+.m2/
 .tools/
 .mvn/wrapper/maven-wrapper.jar
 

@@ -24,8 +24,8 @@ server:
     threads:
       max: ${ZIPURL_TOMCAT_MAX_THREADS:50}
       min-spare: ${ZIPURL_TOMCAT_MIN_SPARE_THREADS:5}
-    accept-count: ${ZIPURL_TOMCAT_ACCEPT_COUNT:50}
-    max-connections: ${ZIPURL_TOMCAT_MAX_CONNECTIONS:200}
+    accept-count: ${ZIPURL_TOMCAT_ACCEPT_COUNT:100}
+    max-connections: ${ZIPURL_TOMCAT_MAX_CONNECTIONS:500}
 
 management:
   endpoints:
@@ -40,9 +40,12 @@ management:
 zipurl:
   generated-alias-length: 8
   max-generated-alias-attempts: 10
-  local-cache-max-size: 100000
-  local-cache-expire-after-access: 1h
+  cache-max-size: ${ZIPURL_CACHE_MAX_SIZE:100000}
+  cache-expire-after-write-seconds: ${ZIPURL_CACHE_EXPIRE_AFTER_WRITE_SECONDS:3600}
   shared-cache-ttl: 6h
+  access-count-mode: ${ZIPURL_ACCESS_COUNT_MODE:async}
+  access-count-flush-interval-ms: ${ZIPURL_ACCESS_COUNT_FLUSH_INTERVAL_MS:1000}
+  access-count-max-pending-aliases: ${ZIPURL_ACCESS_COUNT_MAX_PENDING_ALIASES:100000}
   url-cache:
     mode: local
   reserved-aliases:
@@ -61,9 +64,9 @@ spring:
     driver-class-name: org.postgresql.Driver
     hikari:
       # Keep each instance's connection footprint small so app replicas stay
-      # within the managed Postgres connection cap. The default is 1 because this
-      # managed database tier reserves its remaining slots for superuser/maintenance.
-      maximum-pool-size: ${ZIPURL_DB_MAX_POOL:1}
+      # within the managed Postgres connection cap. The default is 2 to stay
+      # conservative while still allowing the app to serve and flush counters.
+      maximum-pool-size: ${ZIPURL_DB_MAX_POOL:2}
       minimum-idle: ${ZIPURL_DB_MIN_IDLE:0}
       connection-timeout: ${ZIPURL_DB_CONNECTION_TIMEOUT:10000}
       idle-timeout: ${ZIPURL_DB_IDLE_TIMEOUT:30000}
@@ -81,7 +84,7 @@ spring:
         enabled: true
   jpa:
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     database-platform: org.hibernate.dialect.PostgreSQLDialect
   h2:
     console:
@@ -90,3 +93,4 @@ spring:
 zipurl:
   url-cache:
     mode: ${ZIPURL_URL_CACHE_MODE:valkey}
+  access-count-mode: ${ZIPURL_ACCESS_COUNT_MODE:disabled}

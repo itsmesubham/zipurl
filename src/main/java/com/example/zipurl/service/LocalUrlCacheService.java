@@ -12,23 +12,23 @@ import org.springframework.stereotype.Service;
 @ConditionalOnProperty(prefix = "zipurl.url-cache", name = "mode", havingValue = "local", matchIfMissing = true)
 public class LocalUrlCacheService implements UrlCacheService {
 
-    private final Cache<String, String> cache;
+    private final Cache<String, CachedResolvedUrl> cache;
 
     public LocalUrlCacheService(ZipurlProperties zipurlProperties) {
         this.cache = Caffeine.newBuilder()
-                .maximumSize(zipurlProperties.getLocalCacheMaxSize())
-                .expireAfterAccess(zipurlProperties.getLocalCacheExpireAfterAccess())
+                .maximumSize(zipurlProperties.getCacheMaxSize())
+                .expireAfterWrite(java.time.Duration.ofSeconds(zipurlProperties.getCacheExpireAfterWriteSeconds()))
                 .build();
     }
 
     @Override
-    public String getOriginalUrl(String alias, Function<String, String> loader) {
+    public CachedResolvedUrl getResolvedUrl(String alias, Function<String, CachedResolvedUrl> loader) {
         return cache.get(alias, loader);
     }
 
     @Override
-    public void putOriginalUrl(String alias, String originalUrl) {
-        cache.put(alias, originalUrl);
+    public void putResolvedUrl(String alias, CachedResolvedUrl resolvedUrl) {
+        cache.put(alias, resolvedUrl);
     }
 
     @Override

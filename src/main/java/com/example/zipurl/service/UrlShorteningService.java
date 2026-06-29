@@ -68,7 +68,11 @@ public class UrlShorteningService {
     }
 
     public String resolveOriginalUrl(String alias) {
-        String originalUrl = urlCacheService.getOriginalUrl(alias, this::loadOriginalUrl);
+        CachedResolvedUrl resolvedUrl = urlCacheService.getResolvedUrl(alias, this::loadResolvedUrl);
+        if (resolvedUrl.isExpired(Instant.now())) {
+            urlCacheService.invalidate(alias);
+            throw new ShortUrlNotFoundException(alias);
+        }
         try {
             accessCountService.recordAccess(alias);
         } catch (ShortUrlNotFoundException exception) {
@@ -80,7 +84,7 @@ public class UrlShorteningService {
             log.warn("Failed to record access for alias '{}': {}", alias, exception.getMessage());
         }
 
-        return originalUrl;
+        return resolvedUrl.originalUrl();
     }
 
     public ShortUrl getShortUrl(String alias) {
@@ -105,7 +109,7 @@ public class UrlShorteningService {
 
                 return shortUrlRepository.saveAndFlush(new ShortUrl(alias, originalUrl, expiresAt));
             });
-            urlCacheService.putOriginalUrl(shortUrl.getAlias(), shortUrl.getOriginalUrl());
+            urlCacheService.putResolvedUrl(shortUrl.getAlias(), new CachedResolvedUrl(shortUrl.getOriginalUrl(), shortUrl.getExpiresAt()));
             return shortUrl;
         } catch (DataIntegrityViolationException exception) {
             throw new AliasAlreadyExistsException(alias, exception);
@@ -124,7 +128,7 @@ public class UrlShorteningService {
                 ShortUrl shortUrl = transactionTemplate.execute(status ->
                         shortUrlRepository.saveAndFlush(new ShortUrl(alias, originalUrl, expiresAt))
                 );
-                urlCacheService.putOriginalUrl(shortUrl.getAlias(), shortUrl.getOriginalUrl());
+                urlCacheService.putResolvedUrl(shortUrl.getAlias(), new CachedResolvedUrl(shortUrl.getOriginalUrl(), shortUrl.getExpiresAt()));
                 return shortUrl;
             } catch (DataIntegrityViolationException exception) {
                 // A concurrent request may have claimed the alias first; try a fresh transaction.
@@ -154,13 +158,13 @@ public class UrlShorteningService {
         return reservedAliases.contains(alias.toLowerCase(Locale.ROOT));
     }
 
-    private String loadOriginalUrl(String alias) {
+    private CachedResolvedUrl loadResolvedUrl(String alias) {
         ShortUrl shortUrl = shortUrlRepository.findByAlias(alias)
                 .orElseThrow(() -> new ShortUrlNotFoundException(alias));
         if (shortUrl.isExpired(Instant.now())) {
             throw new ShortUrlNotFoundException(alias);
         }
-        return shortUrl.getOriginalUrl();
+        return new CachedResolvedUrl(shortUrl.getOriginalUrl(), shortUrl.getExpiresAt());
     }
 
 }

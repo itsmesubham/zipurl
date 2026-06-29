@@ -22,11 +22,11 @@ flowchart LR
     subgraph serviceLayer [Service Layer]
         urlService["UrlShorteningService\ncreate, resolve, metadata"]
         aliasGenerator["AliasGenerator\nBase62 aliases"]
-        accessCounter["AccessCountService\nPostgres increment"]
+        accessCounter["AccessCountService\nsync / async / disabled"]
     end
 
     subgraph cacheLayer [Cache]
-        caffeine["Caffeine\nalias to originalUrl"]
+        caffeine["Caffeine\nalias + expiresAt"]
         valkey["Valkey optional\nshared alias cache"]
     end
 
@@ -50,11 +50,11 @@ flowchart LR
 Low-level details:
 
 - `POST /api/urls` creates aliases and persists canonical URL state in Postgres.
-- `GET /{alias}` resolves aliases through Caffeine plus Postgres and records access counts.
+- `GET /{alias}` resolves aliases through Caffeine/Valkey/Postgres, validates expiry, and records access counts according to the configured mode.
 - `GET /api/urls/{alias}` reads metadata from Postgres.
 - Postgres remains the source of truth for aliases, original URLs, creation time, and persisted access counts.
 - Caffeine is the local read cache for redirects.
-- Valkey can be enabled as an optional shared L2 cache for alias-to-original-URL entries.
+- Valkey can be enabled as an optional shared L2 cache for alias-to-original-URL plus expiry entries.
 
 ### Creation Flow
 
@@ -118,7 +118,7 @@ flowchart LR
         urlService["UrlShorteningService.resolveOriginalUrl"]
         caffeine["Caffeine L1 cache\natomic local get"]
         valkey["Valkey L2 cache\noptional shared cache"]
-        loader["Cache loader\nfindByAlias"]
+        loader["Cache loader\nfindByAlias + expiry"]
     end
 
     subgraph storage [Storage]
@@ -126,8 +126,8 @@ flowchart LR
     end
 
     subgraph counting [Access Counting]
-        accessCounter["AccessCountService"]
-        dbMode["Postgres update\nsingle row increment"]
+    accessCounter["AccessCountService"]
+    dbMode["sync: direct update\nasync: buffered batch\n disabled: no-op"]
     end
 
     subgraph response [Response]
@@ -153,8 +153,10 @@ Low-level details:
 - Caffeine uses atomic local loading, which avoids many same-instance concurrent requests stampeding Postgres for the same hot alias.
 - Valkey can be used as a shared L2 cache across app instances; Postgres remains the source of truth.
 - Redirects return only `302` plus the `Location` header. Metadata is available through the API endpoint instead.
-- The per-access counter `UPDATE` is expiry-aware (`expires_at IS NULL OR expires_at > now`). If the alias is missing or expired while still cached, the update matches 0 rows, the cache entry is invalidated, and the redirect returns `404` — so expired links stop redirecting even on a cache hit.
-- A transient counter-write failure (e.g. a brief Postgres hiccup) is logged and swallowed so a valid, cached redirect stays available; only the count for that request is lost.
+- Cached redirect entries include `expiresAt`, so redirects can reject expired aliases even when the original URL is already cached.
+- In `sync` mode the app still performs a direct expiry-aware Postgres increment.
+- In `async` mode redirects only increment an in-memory `LongAdder` and a scheduled flusher writes batched deltas back to Postgres.
+- In `disabled` mode redirects skip counting entirely.
 
 ### Access Count Flow
 
@@ -170,7 +172,7 @@ flowchart LR
     end
 
     subgraph dbMode [Postgres Counting]
-        dbIncrement["UPDATE short_urls\naccess_count = access_count + 1"]
+        dbIncrement["UPDATE short_urls\naccess_count = access_count + :delta"]
     end
 
     subgraph storage [Storage]
@@ -183,10 +185,12 @@ flowchart LR
 
 Low-level details:
 
-- Every successful redirect performs an atomic Postgres increment.
-- This is the simplest correct counting model and avoids buffered-counter loss windows.
-- Metadata reads the persisted Postgres count.
-- If redirect traffic grows enough that this becomes a write bottleneck, move counting to a durable event stream rather than a lossy cache buffer.
+- `sync` mode performs an atomic Postgres increment on every redirect.
+- `async` mode batches counts by alias in memory and flushes them on a timer.
+- `disabled` mode skips access counting completely.
+- Metadata continues to read the persisted Postgres count.
+- Use `async` for production. One redirect per Postgres write does not scale to high RPS, and 1M RPS cannot be served by a single row update per request.
+- Batched writes must be grouped by alias so repeated redirects collapse into one `UPDATE ... SET access_count = access_count + :delta`.
 
 ### Metadata Flow
 
@@ -227,6 +231,14 @@ Low-level details:
 - `GET /{alias}` redirects to the original URL and increments `accessCount`.
 - `GET /api/urls/{alias}` returns metadata without incrementing `accessCount`.
 
+## Access Count Modes
+
+- `sync`: direct Postgres increment on every redirect, useful when you want the simplest correctness-first behavior.
+- `async`: production default. Redirects increment an in-memory `LongAdder`, then a scheduled flusher batches deltas by alias and writes them to Postgres.
+- `disabled`: skips counting entirely for extreme-load tests or temporary hot-path validation.
+
+Recommendation: use `async` in production. The repository default is `disabled` so the redirect hot path stays write-free unless you explicitly enable counting.
+
 ## Requirements
 
 - Java 21
@@ -243,7 +255,7 @@ mvn spring-boot:run
 ```bash
 export ZIPURL_DB_PASSWORD='<database-password>'
 export ZIPURL_VALKEY_PASSWORD='<valkey-password>'
-SPRING_PROFILES_ACTIVE=postgres ZIPURL_DB_MAX_POOL=1 mvn spring-boot:run
+SPRING_PROFILES_ACTIVE=postgres ZIPURL_DB_MAX_POOL=2 mvn spring-boot:run
 ```
 
 The `postgres` profile uses:
@@ -258,7 +270,7 @@ The Docker image defaults to `SPRING_PROFILES_ACTIVE=postgres` so DigitalOcean A
 
 - `ZIPURL_DB_PASSWORD`
 - `ZIPURL_VALKEY_PASSWORD`
-- `ZIPURL_DB_MAX_POOL=1`
+- `ZIPURL_DB_MAX_POOL=2`
 - `ZIPURL_DB_MIN_IDLE=0`
 - `ZIPURL_DB_CONNECTION_TIMEOUT=10000`
 - `ZIPURL_DB_IDLE_TIMEOUT=30000`
@@ -267,8 +279,13 @@ The Docker image defaults to `SPRING_PROFILES_ACTIVE=postgres` so DigitalOcean A
 - `ZIPURL_DB_INIT_FAIL_TIMEOUT=0`
 - `ZIPURL_TOMCAT_MAX_THREADS=50`
 - `ZIPURL_TOMCAT_MIN_SPARE_THREADS=5`
-- `ZIPURL_TOMCAT_ACCEPT_COUNT=50`
-- `ZIPURL_TOMCAT_MAX_CONNECTIONS=200`
+- `ZIPURL_TOMCAT_ACCEPT_COUNT=100`
+- `ZIPURL_TOMCAT_MAX_CONNECTIONS=500`
+- `ZIPURL_CACHE_MAX_SIZE=100000`
+- `ZIPURL_CACHE_EXPIRE_AFTER_WRITE_SECONDS=3600`
+- `ZIPURL_ACCESS_COUNT_MODE=async`
+- `ZIPURL_ACCESS_COUNT_FLUSH_INTERVAL_MS=1000`
+- `ZIPURL_ACCESS_COUNT_MAX_PENDING_ALIASES=100000`
 
 Valkey shared URL cache uses:
 
@@ -281,9 +298,11 @@ Set `ZIPURL_URL_CACHE_MODE=local` to bypass Valkey and use only in-process Caffe
 
 ### Schema Updates
 
-The `postgres` profile keeps Hibernate on `ddl-auto: update` so the schema follows the entity model automatically at startup. The H2/local profile also uses `ddl-auto: update`.
+The `postgres` profile uses `spring.jpa.hibernate.ddl-auto=validate`. Production expects the schema to be provisioned explicitly and safely ahead of time.
 
-The SQL files in `src/main/resources/db/migration` are no longer applied by the application during startup.
+The H2/local profile still uses `ddl-auto: update` for convenience.
+
+The SQL files in `src/main/resources/db/migration` are not applied by the application during startup.
 
 ### Connection Pool Sizing
 

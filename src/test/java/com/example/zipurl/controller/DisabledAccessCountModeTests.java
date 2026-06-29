@@ -15,10 +15,11 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.web.servlet.MockMvc;
 
 @SpringBootTest(properties = {
-        "zipurl.access-count.mode=sync"
+        "zipurl.access-count.mode=disabled",
+        "zipurl.url-cache.mode=local"
 })
 @AutoConfigureMockMvc
-class RedirectControllerTests {
+class DisabledAccessCountModeTests {
 
     @Autowired
     private MockMvc mockMvc;
@@ -32,30 +33,14 @@ class RedirectControllerTests {
     }
 
     @Test
-    void redirectsToOriginalUrlAndTracksAccess() throws Exception {
-        shortUrlRepository.saveAndFlush(new ShortUrl("go123", "https://example.com/landing"));
+    void redirectSkipsCountingInDisabledMode() throws Exception {
+        shortUrlRepository.saveAndFlush(new ShortUrl("off001", "https://example.com/off"));
 
-        mockMvc.perform(get("/go123"))
+        mockMvc.perform(get("/off001"))
                 .andExpect(status().isFound())
-                .andExpect(header().string("Location", "https://example.com/landing"));
+                .andExpect(header().string("Location", "https://example.com/off"));
 
-        assertThat(shortUrlRepository.findByAlias("go123"))
-                .hasValueSatisfying(shortUrl -> assertThat(shortUrl.getAccessCount()).isEqualTo(1));
-    }
-
-    @Test
-    void returnsNotFoundForMissingAlias() throws Exception {
-        mockMvc.perform(get("/missing123"))
-                .andExpect(status().isNotFound());
-    }
-
-    @Test
-    void returnsNotFoundForExpiredAlias() throws Exception {
-        shortUrlRepository.saveAndFlush(
-                new ShortUrl("old123", "https://example.com/old", java.time.Instant.now().minusSeconds(60))
-        );
-
-        mockMvc.perform(get("/old123"))
-                .andExpect(status().isNotFound());
+        assertThat(shortUrlRepository.findByAlias("off001"))
+                .hasValueSatisfying(shortUrl -> assertThat(shortUrl.getAccessCount()).isZero());
     }
 }

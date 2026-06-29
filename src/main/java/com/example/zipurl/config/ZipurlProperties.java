@@ -28,11 +28,20 @@ public class ZipurlProperties {
     private Set<String> reservedAliases = Set.of("api", "health", "h2-console");
 
     @Min(1)
-    private long localCacheMaxSize = 100_000;
+    private long cacheMaxSize = 100_000;
 
-    private Duration localCacheExpireAfterAccess = Duration.ofHours(1);
+    @Min(1)
+    private long cacheExpireAfterWriteSeconds = 3_600;
 
     private Duration sharedCacheTtl = Duration.ofHours(6);
+
+    private AccessCountMode accessCountMode = AccessCountMode.ASYNC;
+
+    @Min(1)
+    private long accessCountFlushIntervalMs = 1_000;
+
+    @Min(1)
+    private long accessCountMaxPendingAliases = 100_000;
 
     public int getGeneratedAliasLength() {
         return generatedAliasLength;
@@ -58,20 +67,20 @@ public class ZipurlProperties {
         this.reservedAliases = reservedAliases;
     }
 
-    public long getLocalCacheMaxSize() {
-        return localCacheMaxSize;
+    public long getCacheMaxSize() {
+        return cacheMaxSize;
     }
 
-    public void setLocalCacheMaxSize(long localCacheMaxSize) {
-        this.localCacheMaxSize = localCacheMaxSize;
+    public void setCacheMaxSize(long cacheMaxSize) {
+        this.cacheMaxSize = cacheMaxSize;
     }
 
-    public Duration getLocalCacheExpireAfterAccess() {
-        return localCacheExpireAfterAccess;
+    public long getCacheExpireAfterWriteSeconds() {
+        return cacheExpireAfterWriteSeconds;
     }
 
-    public void setLocalCacheExpireAfterAccess(Duration localCacheExpireAfterAccess) {
-        this.localCacheExpireAfterAccess = localCacheExpireAfterAccess;
+    public void setCacheExpireAfterWriteSeconds(long cacheExpireAfterWriteSeconds) {
+        this.cacheExpireAfterWriteSeconds = cacheExpireAfterWriteSeconds;
     }
 
     public Duration getSharedCacheTtl() {
@@ -80,5 +89,29 @@ public class ZipurlProperties {
 
     public void setSharedCacheTtl(Duration sharedCacheTtl) {
         this.sharedCacheTtl = sharedCacheTtl;
+    }
+
+    public AccessCountMode getAccessCountMode() {
+        return accessCountMode;
+    }
+
+    public void setAccessCountMode(AccessCountMode accessCountMode) {
+        this.accessCountMode = accessCountMode;
+    }
+
+    public long getAccessCountFlushIntervalMs() {
+        return accessCountFlushIntervalMs;
+    }
+
+    public void setAccessCountFlushIntervalMs(long accessCountFlushIntervalMs) {
+        this.accessCountFlushIntervalMs = accessCountFlushIntervalMs;
+    }
+
+    public long getAccessCountMaxPendingAliases() {
+        return accessCountMaxPendingAliases;
+    }
+
+    public void setAccessCountMaxPendingAliases(long accessCountMaxPendingAliases) {
+        this.accessCountMaxPendingAliases = accessCountMaxPendingAliases;
     }
 }

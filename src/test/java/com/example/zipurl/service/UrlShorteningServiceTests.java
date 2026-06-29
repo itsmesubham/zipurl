@@ -28,7 +28,9 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 
-@SpringBootTest
+@SpringBootTest(properties = {
+        "zipurl.access-count.mode=sync"
+})
 class UrlShorteningServiceTests {
 
     @Autowired
@@ -176,7 +178,10 @@ class UrlShorteningServiceTests {
                 new ShortUrl("cached1", "https://example.com/cached", Instant.now().minusSeconds(60))
         );
         // Simulate an entry that was cached while still valid, then expired.
-        urlCacheService.putOriginalUrl("cached1", "https://example.com/cached");
+        urlCacheService.putResolvedUrl("cached1", new com.example.zipurl.service.CachedResolvedUrl(
+                "https://example.com/cached",
+                Instant.now().plusSeconds(60)
+        ));
 
         assertThatThrownBy(() -> urlShorteningService.resolveOriginalUrl("cached1"))
                 .isInstanceOf(ShortUrlNotFoundException.class);

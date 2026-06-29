@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import java.time.Duration;
 
 import com.example.zipurl.config.ZipurlProperties;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
@@ -27,25 +28,31 @@ class ValkeyUrlCacheServiceTests {
         when(valueOperations.get("zipurl:url:abc123"))
                 .thenThrow(new RedisConnectionFailureException("Valkey unavailable"));
 
-        ValkeyUrlCacheService cacheService = new ValkeyUrlCacheService(redisTemplate, zipurlProperties);
+        ValkeyUrlCacheService cacheService = new ValkeyUrlCacheService(redisTemplate, zipurlProperties, new ObjectMapper());
 
-        String originalUrl = cacheService.getOriginalUrl("abc123", alias -> "https://example.com/fallback");
+        CachedResolvedUrl originalUrl = cacheService.getResolvedUrl(
+                "abc123",
+                alias -> new CachedResolvedUrl("https://example.com/fallback", null)
+        );
 
-        assertThat(originalUrl).isEqualTo("https://example.com/fallback");
+        assertThat(originalUrl.originalUrl()).isEqualTo("https://example.com/fallback");
     }
 
     @Test
-    void putOriginalUrlDoesNotFailWhenValkeyWriteFails() {
+    void putResolvedUrlDoesNotFailWhenValkeyWriteFails() {
         StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
         ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
         when(redisTemplate.opsForValue()).thenReturn(valueOperations);
         org.mockito.Mockito.doThrow(new RedisConnectionFailureException("Valkey unavailable"))
                 .when(valueOperations)
-                .set(eq("zipurl:url:abc123"), eq("https://example.com"), any(Duration.class));
+                .set(eq("zipurl:url:abc123"), any(String.class), any(Duration.class));
 
-        ValkeyUrlCacheService cacheService = new ValkeyUrlCacheService(redisTemplate, zipurlProperties);
+        ValkeyUrlCacheService cacheService = new ValkeyUrlCacheService(redisTemplate, zipurlProperties, new ObjectMapper());
 
-        assertThatCode(() -> cacheService.putOriginalUrl("abc123", "https://example.com"))
+        assertThatCode(() -> cacheService.putResolvedUrl(
+                "abc123",
+                new CachedResolvedUrl("https://example.com", null)
+        ))
                 .doesNotThrowAnyException();
     }
 
@@ -55,7 +62,7 @@ class ValkeyUrlCacheServiceTests {
         when(redisTemplate.delete("zipurl:url:abc123"))
                 .thenThrow(new RedisConnectionFailureException("Valkey unavailable"));
 
-        ValkeyUrlCacheService cacheService = new ValkeyUrlCacheService(redisTemplate, zipurlProperties);
+        ValkeyUrlCacheService cacheService = new ValkeyUrlCacheService(redisTemplate, zipurlProperties, new ObjectMapper());
 
         assertThatCode(() -> cacheService.invalidate("abc123"))
                 .doesNotThrowAnyException();

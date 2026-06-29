@@ -2,9 +2,11 @@ package com.example.zipurl.service;
 
 import java.util.function.Function;
 
+import com.example.zipurl.config.ZipurlProperties;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
-import com.example.zipurl.config.ZipurlProperties;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -16,34 +18,43 @@ public class ValkeyUrlCacheService implements UrlCacheService {
 
     private static final String URL_CACHE_KEY_PREFIX = "zipurl:url:";
 
-    private final Cache<String, String> localCache;
+    private final Cache<String, CachedResolvedUrl> localCache;
     private final StringRedisTemplate redisTemplate;
     private final ZipurlProperties zipurlProperties;
+    private final ObjectMapper objectMapper;
 
     public ValkeyUrlCacheService(
             StringRedisTemplate redisTemplate,
-            ZipurlProperties zipurlProperties
+            ZipurlProperties zipurlProperties,
+            ObjectMapper objectMapper
     ) {
         this.redisTemplate = redisTemplate;
         this.zipurlProperties = zipurlProperties;
+        this.objectMapper = objectMapper;
         this.localCache = Caffeine.newBuilder()
-                .maximumSize(zipurlProperties.getLocalCacheMaxSize())
-                .expireAfterAccess(zipurlProperties.getLocalCacheExpireAfterAccess())
+                .maximumSize(zipurlProperties.getCacheMaxSize())
+                .expireAfterWrite(java.time.Duration.ofSeconds(zipurlProperties.getCacheExpireAfterWriteSeconds()))
                 .build();
     }
 
     @Override
-    public String getOriginalUrl(String alias, Function<String, String> loader) {
+    public CachedResolvedUrl getResolvedUrl(String alias, Function<String, CachedResolvedUrl> loader) {
         return localCache.get(alias, cacheKey -> loadFromValkey(alias, loader));
     }
 
     @Override
-    public void putOriginalUrl(String alias, String originalUrl) {
-        localCache.put(alias, originalUrl);
+    public void putResolvedUrl(String alias, CachedResolvedUrl resolvedUrl) {
+        localCache.put(alias, resolvedUrl);
         try {
-            redisTemplate.opsForValue().set(cacheKey(alias), originalUrl, zipurlProperties.getSharedCacheTtl());
+            redisTemplate.opsForValue().set(
+                    cacheKey(alias),
+                    objectMapper.writeValueAsString(resolvedUrl),
+                    zipurlProperties.getSharedCacheTtl()
+            );
         } catch (DataAccessException exception) {
             // Cache warming is best-effort; Postgres remains the source of truth.
+        } catch (JsonProcessingException exception) {
+            // Serialization failures should not break writes.
         }
     }
 
@@ -57,24 +68,32 @@ public class ValkeyUrlCacheService implements UrlCacheService {
         }
     }
 
-    private String loadFromValkey(String alias, Function<String, String> loader) {
+    private CachedResolvedUrl loadFromValkey(String alias, Function<String, CachedResolvedUrl> loader) {
         try {
-            String cachedOriginalUrl = redisTemplate.opsForValue().get(cacheKey(alias));
-            if (cachedOriginalUrl != null) {
-                return cachedOriginalUrl;
+            String cachedValue = redisTemplate.opsForValue().get(cacheKey(alias));
+            if (cachedValue != null) {
+                return objectMapper.readValue(cachedValue, CachedResolvedUrl.class);
             }
         } catch (DataAccessException exception) {
             return loader.apply(alias);
+        } catch (JsonProcessingException exception) {
+            // Fall through to the authoritative Postgres lookup.
         }
 
-        String originalUrl = loader.apply(alias);
+        CachedResolvedUrl resolvedUrl = loader.apply(alias);
         try {
-            redisTemplate.opsForValue().set(cacheKey(alias), originalUrl, zipurlProperties.getSharedCacheTtl());
+            redisTemplate.opsForValue().set(
+                    cacheKey(alias),
+                    objectMapper.writeValueAsString(resolvedUrl),
+                    zipurlProperties.getSharedCacheTtl()
+            );
         } catch (DataAccessException exception) {
             // Cache fill is best-effort; return the DB-loaded value.
+        } catch (JsonProcessingException exception) {
+            // Serialization failures are best-effort only.
         }
 
-        return originalUrl;
+        return resolvedUrl;
     }
 
     private String cacheKey(String alias) {
