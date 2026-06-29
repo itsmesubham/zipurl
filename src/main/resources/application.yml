@@ -22,6 +22,12 @@ spring:
 
 server:
   port: 8080
+  tomcat:
+    threads:
+      max: ${ZIPURL_TOMCAT_MAX_THREADS:50}
+      min-spare: ${ZIPURL_TOMCAT_MIN_SPARE_THREADS:5}
+    accept-count: ${ZIPURL_TOMCAT_ACCEPT_COUNT:50}
+    max-connections: ${ZIPURL_TOMCAT_MAX_CONNECTIONS:200}
 
 management:
   endpoints:
@@ -56,14 +62,15 @@ spring:
     password: ${ZIPURL_DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
     hikari:
-      # Keep each instance's connection footprint small so several instances + Flyway
-      # stay within the managed Postgres connection cap (DigitalOcean reserves slots for
-      # superuser/maintenance). Default Hikari pool is 10, which exhausts small DB plans.
-      maximum-pool-size: ${ZIPURL_DB_MAX_POOL:5}
-      minimum-idle: ${ZIPURL_DB_MIN_IDLE:1}
+      # Keep each instance's connection footprint small so app replicas and Flyway stay
+      # within the managed Postgres connection cap.
+      maximum-pool-size: ${ZIPURL_DB_MAX_POOL:2}
+      minimum-idle: ${ZIPURL_DB_MIN_IDLE:0}
       connection-timeout: ${ZIPURL_DB_CONNECTION_TIMEOUT:10000}
+      idle-timeout: ${ZIPURL_DB_IDLE_TIMEOUT:30000}
       max-lifetime: ${ZIPURL_DB_MAX_LIFETIME:300000}
       keepalive-time: ${ZIPURL_DB_KEEPALIVE:120000}
+      initialization-fail-timeout: ${ZIPURL_DB_INIT_FAIL_TIMEOUT:0}
   data:
     redis:
       host: ${ZIPURL_VALKEY_HOST:zipurl-valkey-do-user-39324437-0.a.db.ondigitalocean.com}
@@ -75,7 +82,7 @@ spring:
         enabled: true
   jpa:
     hibernate:
-      ddl-auto: ${ZIPURL_DDL_AUTO:validate}
+      ddl-auto: validate
     database-platform: org.hibernate.dialect.PostgreSQLDialect
   flyway:
     enabled: true
