@@ -7,8 +7,6 @@ import javax.sql.DataSource;
 import com.zaxxer.hikari.HikariDataSource;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration;
-import org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration;
 import org.springframework.boot.test.context.SpringBootTest;
 
 @SpringBootTest(
@@ -22,15 +20,16 @@ import org.springframework.boot.test.context.SpringBootTest;
                 "spring.jpa.hibernate.ddl-auto=none",
                 "spring.jpa.database-platform=org.hibernate.dialect.H2Dialect",
                 "spring.flyway.enabled=false",
-                "spring.autoconfigure.exclude=" + RedisAutoConfiguration.class.getName() + ","
-                        + RedisRepositoriesAutoConfiguration.class.getName(),
+                "spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.data.redis.RedisAutoConfiguration,"
+                        + "org.springframework.boot.autoconfigure.data.redis.RedisRepositoriesAutoConfiguration",
                 "ZIPURL_DB_MAX_POOL=4",
                 "ZIPURL_DB_MIN_IDLE=1",
                 "ZIPURL_DB_CONNECTION_TIMEOUT=2345",
                 "ZIPURL_DB_IDLE_TIMEOUT=30000",
                 "ZIPURL_DB_MAX_LIFETIME=600000",
                 "ZIPURL_DB_KEEPALIVE=120000",
-                "ZIPURL_DB_INIT_FAIL_TIMEOUT=555"
+                "ZIPURL_DB_INIT_FAIL_TIMEOUT=555",
+                "ZIPURL_URL_CACHE_MODE=local"
         }
 )
 class PostgresProfileHikariPropertiesTests {
