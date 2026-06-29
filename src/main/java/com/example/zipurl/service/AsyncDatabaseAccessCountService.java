@@ -1,7 +1,10 @@
 package com.example.zipurl.service;
 
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -13,6 +16,9 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.LongAdder;
 
 import com.example.zipurl.config.ZipurlProperties;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Gauge;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -45,15 +51,37 @@ public class AsyncDatabaseAccessCountService implements AccessCountService {
     private final ConcurrentHashMap<String, LongAdder> pendingCounts = new ConcurrentHashMap<>();
     private final AtomicBoolean flushInProgress = new AtomicBoolean(false);
     private final AtomicLong droppedCounts = new AtomicLong();
+    private final Counter flushSuccessCounter;
+    private final Counter flushFailureCounter;
+    private final Counter droppedCountCounter;
     private final ExecutorService shutdownExecutor = Executors.newSingleThreadExecutor(runnable -> {
         Thread thread = new Thread(runnable, "zipurl-access-count-shutdown");
         thread.setDaemon(true);
         return thread;
     });
 
-    public AsyncDatabaseAccessCountService(NamedParameterJdbcTemplate jdbcTemplate, ZipurlProperties zipurlProperties) {
+    public AsyncDatabaseAccessCountService(
+            NamedParameterJdbcTemplate jdbcTemplate,
+            ZipurlProperties zipurlProperties,
+            MeterRegistry meterRegistry
+    ) {
         this.jdbcTemplate = jdbcTemplate;
         this.zipurlProperties = zipurlProperties;
+        this.flushSuccessCounter = Counter.builder("zipurl.access.count.flush.success")
+                .description("Number of successfully flushed access-count batches")
+                .register(meterRegistry);
+        this.flushFailureCounter = Counter.builder("zipurl.access.count.flush.failure")
+                .description("Number of failed access-count flush batches")
+                .register(meterRegistry);
+        this.droppedCountCounter = Counter.builder("zipurl.access.count.dropped")
+                .description("Number of dropped access-count events")
+                .register(meterRegistry);
+        Gauge.builder("zipurl.access.count.pending.aliases", pendingCounts, ConcurrentHashMap::size)
+                .description("Pending aliases waiting to be flushed")
+                .register(meterRegistry);
+        Gauge.builder("zipurl.access.count.pending.total", this, service -> (double) service.pendingCountTotal())
+                .description("Pending access-count increments waiting to be flushed")
+                .register(meterRegistry);
     }
 
     @Override
@@ -90,9 +118,10 @@ public class AsyncDatabaseAccessCountService implements AccessCountService {
 
     @PreDestroy
     public void flushOnShutdown() {
-        Future<?> future = shutdownExecutor.submit(() -> flushPendingCounts(true));
+        Future<Integer> future = shutdownExecutor.submit(() -> flushPendingCounts(true));
         try {
-            future.get(SHUTDOWN_FLUSH_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+            Integer flushed = future.get(SHUTDOWN_FLUSH_TIMEOUT.toMillis(), TimeUnit.MILLISECONDS);
+            log.info("Flushed {} pending access count(s) during shutdown", flushed);
         } catch (Exception exception) {
             log.warn("Timed out flushing pending access counts during shutdown after {} ms",
                     SHUTDOWN_FLUSH_TIMEOUT.toMillis());
@@ -130,52 +159,70 @@ public class AsyncDatabaseAccessCountService implements AccessCountService {
     }
 
     private int persistCounts(Map<String, Long> drainedCounts, boolean allowRequeue) {
-        SqlParameterSource[] batch = drainedCounts.entrySet().stream()
+        int batchSize = Math.max(1, Math.toIntExact(zipurlProperties.getAccessCountBatchSize()));
+        List<Map<String, Long>> batches = partition(drainedCounts, batchSize);
+        int flushed = 0;
+
+        for (int batchIndex = 0; batchIndex < batches.size(); batchIndex++) {
+            Map<String, Long> batch = batches.get(batchIndex);
+            try {
+                flushed += persistBatch(batch);
+                cleanupDrainedEntries(batch.keySet());
+                flushSuccessCounter.increment();
+            } catch (DataAccessException exception) {
+                flushFailureCounter.increment();
+                Map<String, Long> remainingCounts = mergeRemainingBatches(batches, batchIndex);
+                log.warn("Failed to flush {} pending access-count alias(es) in batch {} of {}: {}",
+                        remainingCounts.size(), batchIndex + 1, batches.size(), exception.getMessage(), exception);
+                if (allowRequeue) {
+                    requeueCounts(remainingCounts);
+                } else {
+                    recordDroppedCounts(sumCounts(remainingCounts), "shutdown flush failure");
+                }
+                return flushed;
+            }
+        }
+
+        if (flushed > 0) {
+            log.info("Flushed {} access count(s) across {} alias(es)", flushed, drainedCounts.size());
+        }
+
+        return flushed;
+    }
+
+    private int persistBatch(Map<String, Long> batch) {
+        SqlParameterSource[] parameters = batch.entrySet().stream()
                 .map(entry -> new MapSqlParameterSource()
                         .addValue("alias", entry.getKey())
                         .addValue("delta", entry.getValue()))
                 .toArray(SqlParameterSource[]::new);
 
-        try {
-            int[] updatedRows = jdbcTemplate.batchUpdate(UPDATE_ACCESS_COUNT_SQL, batch);
-            int flushed = 0;
-            int dropped = 0;
+        int[] updatedRows = jdbcTemplate.batchUpdate(UPDATE_ACCESS_COUNT_SQL, parameters);
+        int flushed = 0;
+        int dropped = 0;
 
-            int index = 0;
-            for (Map.Entry<String, Long> entry : drainedCounts.entrySet()) {
-                int updated = index < updatedRows.length ? updatedRows[index] : 0;
-                if (updated > 0) {
-                    flushed += entry.getValue().intValue();
-                } else {
-                    dropped += entry.getValue().intValue();
-                    log.warn("Dropped {} access count(s) for alias '{}' because the row was missing or expired",
-                            entry.getValue(), entry.getKey());
-                }
-                index++;
-            }
-
-            if (dropped > 0) {
-                recordDroppedCounts(dropped, "row missing or expired");
-            }
-
-            cleanupDrainedEntries(drainedCounts);
-            log.info("Flushed {} access count(s) across {} alias(es)", flushed, drainedCounts.size());
-            return flushed;
-        } catch (DataAccessException exception) {
-            log.warn("Failed to flush {} pending access-count alias(es): {}",
-                    drainedCounts.size(), exception.getMessage(), exception);
-            if (allowRequeue) {
-                requeueCounts(drainedCounts);
+        int index = 0;
+        for (Map.Entry<String, Long> entry : batch.entrySet()) {
+            int updated = index < updatedRows.length ? updatedRows[index] : 0;
+            if (updated > 0) {
+                flushed += entry.getValue().intValue();
             } else {
-                recordDroppedCounts(drainedCounts.values().stream().mapToLong(Long::longValue).sum(),
-                        "shutdown flush failure");
+                dropped += entry.getValue().intValue();
+                log.warn("Dropped {} access count(s) for alias '{}' because the row was missing or expired",
+                        entry.getValue(), entry.getKey());
             }
-            return 0;
+            index++;
         }
+
+        if (dropped > 0) {
+            recordDroppedCounts(dropped, "row missing or expired");
+        }
+
+        return flushed;
     }
 
-    private void cleanupDrainedEntries(Map<String, Long> drainedCounts) {
-        drainedCounts.keySet().forEach(alias ->
+    private void cleanupDrainedEntries(Collection<String> aliases) {
+        aliases.forEach(alias ->
                 pendingCounts.computeIfPresent(alias, (key, counter) -> counter.sum() == 0 ? null : counter));
     }
 
@@ -207,7 +254,44 @@ public class AsyncDatabaseAccessCountService implements AccessCountService {
         }
 
         long totalDropped = droppedCounts.addAndGet(dropped);
+        droppedCountCounter.increment(dropped);
         log.warn("Dropped {} access count(s) ({}) - total dropped so far: {}",
                 dropped, reason, totalDropped);
+    }
+
+    private List<Map<String, Long>> partition(Map<String, Long> drainedCounts, int batchSize) {
+        List<Map<String, Long>> batches = new ArrayList<>();
+        Map<String, Long> currentBatch = new LinkedHashMap<>();
+
+        for (Map.Entry<String, Long> entry : drainedCounts.entrySet()) {
+            currentBatch.put(entry.getKey(), entry.getValue());
+            if (currentBatch.size() >= batchSize) {
+                batches.add(currentBatch);
+                currentBatch = new LinkedHashMap<>();
+            }
+        }
+
+        if (!currentBatch.isEmpty()) {
+            batches.add(currentBatch);
+        }
+
+        return batches;
+    }
+
+    private Map<String, Long> mergeRemainingBatches(List<Map<String, Long>> batches, int failedBatchIndex) {
+        Map<String, Long> remainingCounts = new LinkedHashMap<>();
+        for (int i = failedBatchIndex; i < batches.size(); i++) {
+            remainingCounts.putAll(batches.get(i));
+        }
+
+        return remainingCounts;
+    }
+
+    private long sumCounts(Map<String, Long> counts) {
+        return counts.values().stream().mapToLong(Long::longValue).sum();
+    }
+
+    private long pendingCountTotal() {
+        return pendingCounts.values().stream().mapToLong(LongAdder::sum).sum();
     }
 }

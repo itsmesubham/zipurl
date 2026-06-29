@@ -43,6 +43,9 @@ public class ZipurlProperties {
     @Min(1)
     private long accessCountMaxPendingAliases = 100_000;
 
+    @Min(1)
+    private long accessCountBatchSize = 1_000;
+
     public int getGeneratedAliasLength() {
         return generatedAliasLength;
     }
@@ -113,5 +116,13 @@ public class ZipurlProperties {
 
     public void setAccessCountMaxPendingAliases(long accessCountMaxPendingAliases) {
         this.accessCountMaxPendingAliases = accessCountMaxPendingAliases;
+    }
+
+    public long getAccessCountBatchSize() {
+        return accessCountBatchSize;
+    }
+
+    public void setAccessCountBatchSize(long accessCountBatchSize) {
+        this.accessCountBatchSize = accessCountBatchSize;
     }
 }

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -66,5 +67,30 @@ class ValkeyUrlCacheServiceTests {
 
         assertThatCode(() -> cacheService.invalidate("abc123"))
                 .doesNotThrowAnyException();
+    }
+
+    @Test
+    void localCaffeineHitDoesNotCallValkeyAgain() {
+        StringRedisTemplate redisTemplate = mock(StringRedisTemplate.class);
+        ValueOperations<String, String> valueOperations = mock(ValueOperations.class);
+        when(redisTemplate.opsForValue()).thenReturn(valueOperations);
+        when(valueOperations.get("zipurl:url:abc123"))
+                .thenReturn("{\"originalUrl\":\"https://example.com/cached\",\"expiresAt\":null}");
+
+        ValkeyUrlCacheService cacheService = new ValkeyUrlCacheService(redisTemplate, zipurlProperties, new ObjectMapper());
+
+        assertThat(cacheService.getResolvedUrl(
+                "abc123",
+                alias -> new CachedResolvedUrl("https://example.com/fallback", null)
+        ).originalUrl()).isEqualTo("https://example.com/cached");
+
+        clearInvocations(redisTemplate, valueOperations);
+
+        assertThat(cacheService.getResolvedUrl(
+                "abc123",
+                alias -> new CachedResolvedUrl("https://example.com/fallback", null)
+        ).originalUrl()).isEqualTo("https://example.com/cached");
+
+        org.mockito.Mockito.verifyNoInteractions(redisTemplate, valueOperations);
     }
 }

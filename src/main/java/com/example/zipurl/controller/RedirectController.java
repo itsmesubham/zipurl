@@ -1,18 +1,13 @@
 package com.example.zipurl.controller;
 
-import java.net.URI;
-
 import com.example.zipurl.service.UrlShorteningService;
-import jakarta.validation.constraints.Pattern;
+import jakarta.servlet.http.HttpServletResponse;
 
-import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
-import org.springframework.validation.annotation.Validated;
+import org.springframework.http.HttpHeaders;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestController;
 
-@Validated
 @RestController
 public class RedirectController {
 
@@ -23,15 +18,10 @@ public class RedirectController {
     }
 
     @GetMapping("/{alias:[A-Za-z0-9_-]+}")
-    public ResponseEntity<Void> redirectToOriginalUrl(
-            @PathVariable
-            @Pattern(regexp = "^[A-Za-z0-9_-]+$", message = "must contain only letters, numbers, underscores, or hyphens")
-            String alias
-    ) {
+    public void redirectToOriginalUrl(@PathVariable String alias, HttpServletResponse response) {
         String originalUrl = urlShorteningService.resolveOriginalUrl(alias);
-
-        return ResponseEntity.status(HttpStatus.FOUND)
-                .location(URI.create(originalUrl))
-                .build();
+        response.setStatus(HttpServletResponse.SC_FOUND);
+        response.setHeader(HttpHeaders.LOCATION, originalUrl);
+        response.setContentLength(0);
     }
 }

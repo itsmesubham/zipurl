@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import java.util.concurrent.atomic.AtomicInteger;
@@ -14,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.jdbc.core.namedparam.SqlParameterSource;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 class AsyncDatabaseAccessCountServiceTests {
 
@@ -22,7 +24,11 @@ class AsyncDatabaseAccessCountServiceTests {
         NamedParameterJdbcTemplate jdbcTemplate = mock(NamedParameterJdbcTemplate.class);
         when(jdbcTemplate.batchUpdate(anyString(), any(SqlParameterSource[].class))).thenReturn(new int[] {1});
 
-        AsyncDatabaseAccessCountService service = new AsyncDatabaseAccessCountService(jdbcTemplate, new ZipurlProperties());
+        AsyncDatabaseAccessCountService service = new AsyncDatabaseAccessCountService(
+                jdbcTemplate,
+                new ZipurlProperties(),
+                new SimpleMeterRegistry()
+        );
         service.recordAccess("hot001");
         service.recordAccess("hot001");
         service.recordAccess("hot001");
@@ -52,10 +58,49 @@ class AsyncDatabaseAccessCountServiceTests {
                 .when(jdbcTemplate)
                 .batchUpdate(anyString(), any(SqlParameterSource[].class));
 
-        AsyncDatabaseAccessCountService service = new AsyncDatabaseAccessCountService(jdbcTemplate, new ZipurlProperties());
+        AsyncDatabaseAccessCountService service = new AsyncDatabaseAccessCountService(
+                jdbcTemplate,
+                new ZipurlProperties(),
+                new SimpleMeterRegistry()
+        );
         service.recordAccess("hot002");
 
         assertThat(service.flushPendingCountsForTests()).isZero();
         assertThat(service.flushPendingCountsForTests()).isEqualTo(1);
+    }
+
+    @Test
+    void recordAccessDoesNotTouchJdbcTemplateBeforeFlush() {
+        NamedParameterJdbcTemplate jdbcTemplate = mock(NamedParameterJdbcTemplate.class);
+        AsyncDatabaseAccessCountService service = new AsyncDatabaseAccessCountService(
+                jdbcTemplate,
+                new ZipurlProperties(),
+                new SimpleMeterRegistry()
+        );
+
+        service.recordAccess("hot003");
+
+        verifyNoInteractions(jdbcTemplate);
+    }
+
+    @Test
+    void flushHonorsConfiguredBatchSize() {
+        NamedParameterJdbcTemplate jdbcTemplate = mock(NamedParameterJdbcTemplate.class);
+        when(jdbcTemplate.batchUpdate(anyString(), any(SqlParameterSource[].class))).thenReturn(new int[] {1});
+
+        ZipurlProperties zipurlProperties = new ZipurlProperties();
+        zipurlProperties.setAccessCountBatchSize(1);
+        AsyncDatabaseAccessCountService service = new AsyncDatabaseAccessCountService(
+                jdbcTemplate,
+                zipurlProperties,
+                new SimpleMeterRegistry()
+        );
+
+        service.recordAccess("hot100");
+        service.recordAccess("hot200");
+
+        assertThat(service.flushPendingCountsForTests()).isEqualTo(2);
+        org.mockito.Mockito.verify(jdbcTemplate, org.mockito.Mockito.times(2))
+                .batchUpdate(anyString(), any(SqlParameterSource[].class));
     }
 }

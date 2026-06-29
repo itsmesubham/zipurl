@@ -237,7 +237,7 @@ Low-level details:
 - `async`: production default. Redirects increment an in-memory `LongAdder`, then a scheduled flusher batches deltas by alias and writes them to Postgres.
 - `disabled`: skips counting entirely for extreme-load tests or temporary hot-path validation.
 
-Recommendation: use `async` in production. The repository default is `disabled` so the redirect hot path stays write-free unless you explicitly enable counting.
+Recommendation: keep `disabled` in production for now if you want the write-free redirect hot path. Enable `async` only after verifying the async flusher and Postgres headroom on your deployment.
 
 ## Requirements
 
@@ -255,7 +255,7 @@ mvn spring-boot:run
 ```bash
 export ZIPURL_DB_PASSWORD='<database-password>'
 export ZIPURL_VALKEY_PASSWORD='<valkey-password>'
-SPRING_PROFILES_ACTIVE=postgres ZIPURL_DB_MAX_POOL=2 mvn spring-boot:run
+SPRING_PROFILES_ACTIVE=postgres ZIPURL_DB_MAX_POOL=10 mvn spring-boot:run
 ```
 
 The `postgres` profile uses:
@@ -270,22 +270,23 @@ The Docker image defaults to `SPRING_PROFILES_ACTIVE=postgres` so DigitalOcean A
 
 - `ZIPURL_DB_PASSWORD`
 - `ZIPURL_VALKEY_PASSWORD`
-- `ZIPURL_DB_MAX_POOL=2`
+- `ZIPURL_DB_MAX_POOL=10`
 - `ZIPURL_DB_MIN_IDLE=0`
 - `ZIPURL_DB_CONNECTION_TIMEOUT=10000`
 - `ZIPURL_DB_IDLE_TIMEOUT=30000`
 - `ZIPURL_DB_MAX_LIFETIME=300000`
 - `ZIPURL_DB_KEEPALIVE=120000`
 - `ZIPURL_DB_INIT_FAIL_TIMEOUT=0`
-- `ZIPURL_TOMCAT_MAX_THREADS=50`
-- `ZIPURL_TOMCAT_MIN_SPARE_THREADS=5`
-- `ZIPURL_TOMCAT_ACCEPT_COUNT=100`
-- `ZIPURL_TOMCAT_MAX_CONNECTIONS=500`
+- `ZIPURL_TOMCAT_MAX_THREADS=120`
+- `ZIPURL_TOMCAT_MIN_SPARE_THREADS=20`
+- `ZIPURL_TOMCAT_ACCEPT_COUNT=500`
+- `ZIPURL_TOMCAT_MAX_CONNECTIONS=1500`
 - `ZIPURL_CACHE_MAX_SIZE=100000`
 - `ZIPURL_CACHE_EXPIRE_AFTER_WRITE_SECONDS=3600`
-- `ZIPURL_ACCESS_COUNT_MODE=async`
+- `ZIPURL_ACCESS_COUNT_MODE=disabled`
 - `ZIPURL_ACCESS_COUNT_FLUSH_INTERVAL_MS=1000`
 - `ZIPURL_ACCESS_COUNT_MAX_PENDING_ALIASES=100000`
+- `ZIPURL_ACCESS_COUNT_BATCH_SIZE=1000`
 
 Valkey shared URL cache uses:
 
@@ -298,7 +299,7 @@ Set `ZIPURL_URL_CACHE_MODE=local` to bypass Valkey and use only in-process Caffe
 
 ### Schema Updates
 
-The `postgres` profile uses `spring.jpa.hibernate.ddl-auto=validate`. Production expects the schema to be provisioned explicitly and safely ahead of time.
+The `postgres` profile uses `spring.jpa.hibernate.ddl-auto=validate` and `spring.jpa.open-in-view=false`. Production expects the schema to be provisioned explicitly and safely ahead of time.
 
 The H2/local profile still uses `ddl-auto: update` for convenience.
 
@@ -306,11 +307,11 @@ The SQL files in `src/main/resources/db/migration` are not applied by the applic
 
 ### Connection Pool Sizing
 
-Managed Postgres has a hard connection cap (DigitalOcean reserves several slots for superuser/maintenance), so the `postgres` profile pins a small HikariCP pool instead of the default size of 10:
+Managed Postgres has a hard connection cap (DigitalOcean reserves several slots for superuser/maintenance), so the `postgres` profile keeps the pool well below the limit while using more of the available headroom than a tiny default:
 
 | Property | Env var | Default |
 | --- | --- | --- |
-| `maximum-pool-size` | `ZIPURL_DB_MAX_POOL` | `1` |
+| `maximum-pool-size` | `ZIPURL_DB_MAX_POOL` | `10` |
 | `minimum-idle` | `ZIPURL_DB_MIN_IDLE` | `0` |
 | `connection-timeout` | `ZIPURL_DB_CONNECTION_TIMEOUT` | `10000` ms |
 | `idle-timeout` | `ZIPURL_DB_IDLE_TIMEOUT` | `30000` ms |
@@ -318,11 +319,11 @@ Managed Postgres has a hard connection cap (DigitalOcean reserves several slots 
 | `keepalive-time` | `ZIPURL_DB_KEEPALIVE` | `120000` ms |
 | `initialization-fail-timeout` | `ZIPURL_DB_INIT_FAIL_TIMEOUT` | `0` ms |
 
-Budget connections as `app_instances * ZIPURL_DB_MAX_POOL` and keep it under the database's limit. For small managed Postgres plans:
+Budget connections as `app_instances * ZIPURL_DB_MAX_POOL` plus admin/headroom and keep it under the database's limit. For this 47-connection database:
 
-- 1 instance: set `ZIPURL_DB_MAX_POOL=1`
-- 2 instances: use DigitalOcean PgBouncer or the connection-pool endpoint instead of direct database connections
-- more instances: do not connect directly to the database; use a pooler
+- 2 instances: `ZIPURL_DB_MAX_POOL=10` uses 20 connections and leaves headroom
+- 4 instances: `ZIPURL_DB_MAX_POOL=10` uses 40 connections and leaves 7 connections for admin/headroom
+- do not raise `ZIPURL_DB_MAX_POOL` above 10 as the default
 
 The startup failure `FATAL: remaining connection slots are reserved for roles with the SUPERUSER attribute` means the database is out of slots: reduce `ZIPURL_DB_MAX_POOL` and/or instance count, terminate leftover connections (`SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'defaultdb' AND state = 'idle' AND pid <> pg_backend_pid();`), or restart the database.
 
